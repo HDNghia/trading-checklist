@@ -22,6 +22,7 @@ const CardContent: React.FC<PropsWithChildren<HTMLAttributes<HTMLDivElement> & W
 type RuleCheck = {
   key: string;                // e.g. "has_sl", "max_trades_per_day"
   title: string;              // label
+  description?: string;       // detailed description
   pass: boolean;              // compliance
   level?: "info" | "warning" | "error"; // severity
   value?: number | string | null;         // measured value (e.g. 2.1%)
@@ -64,43 +65,42 @@ function buildFakeDay(dateISO: string, trader: string): ChecklistDay {
 
   const rules: RuleCheck[] = [
     {
-      key: "has_sl",
-      title: "100% orders have SL",
-      pass: allHaveSL,
-      notes: allHaveSL ? "All entries protected" : "Some orders missing SL",
-    },
-    {
-      key: "max_trades",
-      title: "≤ 3 trades/day",
-      pass: trades <= 3,
-      value: trades,
-      limit: 3,
-      notes: trades <= 3 ? "Ok" : `Exceeded by ${trades - 3}`,
-      level: trades <= 3 ? "info" : "warning",
-    },
-    {
-      key: "risk_per_trade",
-      title: "≤ 2% risk per trade",
+      key: "max_risk_2_percent",
+      title: "Max Risk 2%",
+      description: "Không được để rủi ro vượt quá 2% tổng tài khoản",
       pass: riskPerTrade <= 2,
       value: `${riskPerTrade}%`,
       limit: "2%",
-      level: riskPerTrade <= 2 ? "info" : riskPerTrade <= 2.5 ? "warning" : "error",
+      level: riskPerTrade <= 2 ? "info" : "error",
+      notes: riskPerTrade <= 2 ? "Within risk limit" : "Risk exceeded 2% threshold",
     },
     {
-      key: "journal",
-      title: "End-of-day journal submitted",
-      pass: hasJournal,
-      notes: hasJournal ? "Submitted" : "Missing journal",
-      level: hasJournal ? "info" : "warning",
+      key: "no_overtrade",
+      title: "No Overtrade",
+      description: "Không được mở quá nhiều vị thế cùng lúc",
+      pass: trades <= 3,
+      value: trades,
+      limit: 3,
+      level: trades <= 3 ? "info" : "warning",
+      notes: trades <= 3 ? "Position count OK" : `Too many positions: ${trades}`,
     },
     {
-      key: "dd_reset",
-      title: "Reset if DD ≥ 3%",
-      pass: dd < 3, // if ≥3% should reset -> not compliant
-      value: `${dd}%` ,
-      limit: "< 3%",
-      level: dd < 3 ? "info" : "error",
-      notes: dd >= 3 ? "DD exceeded reset threshold" : "Within limits",
+      key: "stop_loss_required",
+      title: "Stop Loss Required",
+      description: "Bắt buộc phải đặt stop loss cho mọi giao dịch",
+      pass: allHaveSL,
+      level: allHaveSL ? "info" : "error",
+      notes: allHaveSL ? "All trades have SL" : "Some trades missing SL",
+    },
+    {
+      key: "max_sl_0_5_percent",
+      title: "Max SL 0.5%",
+      description: "Stop loss không được vượt quá 0.5% tổng tài khoản",
+      pass: riskPerTrade <= 0.5,
+      value: `${riskPerTrade}%`,
+      limit: "0.5%",
+      level: riskPerTrade <= 0.5 ? "info" : "error",
+      notes: riskPerTrade <= 0.5 ? "SL within limit" : "SL exceeded 0.5%",
     },
   ];
 
@@ -442,11 +442,10 @@ export default function DailyChecklistHistory() {
                   <th className="py-2 pr-4">Trades</th>
                   <th className="py-2 pr-4">Pass rate</th>
                   <th className="py-2 pr-4">DD%</th>
-                  <th className="py-2 pr-4">SL 100%</th>
-                  <th className="py-2 pr-4">≤3/day</th>
-                  <th className="py-2 pr-4">≤2%/trade</th>
-                  <th className="py-2 pr-4">Journal</th>
-                  <th className="py-2 pr-4">Reset DD</th>
+                  <th className="py-2 pr-4">Max Risk 2%</th>
+                  <th className="py-2 pr-4">No Overtrade</th>
+                  <th className="py-2 pr-4">SL Required</th>
+                  <th className="py-2 pr-4">Max SL 0.5%</th>
                 </tr>
               </thead>
               <tbody>
@@ -459,11 +458,10 @@ export default function DailyChecklistHistory() {
                       <td className="py-2 pr-4">{d.tradesCount}</td>
                       <td className="py-2 pr-4 font-medium">{passRate}%</td>
                       <td className={`py-2 pr-4 ${d.ddPercent && d.ddPercent>=3? 'text-rose-600 font-medium':'text-gray-700'}`}>{d.ddPercent?.toFixed(1)}%</td>
-                      <td className="py-2 pr-4">{get("has_sl")?.pass? "✓" : "✗"}</td>
-                      <td className="py-2 pr-4">{get("max_trades")?.pass? "✓" : "✗"}</td>
-                      <td className="py-2 pr-4">{get("risk_per_trade")?.pass? "✓" : "✗"}</td>
-                      <td className="py-2 pr-4">{get("journal")?.pass? "✓" : "✗"}</td>
-                      <td className="py-2 pr-4">{get("dd_reset")?.pass? "✓" : "✗"}</td>
+                      <td className="py-2 pr-4">{get("max_risk_2_percent")?.pass? "✓" : "✗"}</td>
+                      <td className="py-2 pr-4">{get("no_overtrade")?.pass? "✓" : "✗"}</td>
+                      <td className="py-2 pr-4">{get("stop_loss_required")?.pass? "✓" : "✗"}</td>
+                      <td className="py-2 pr-4">{get("max_sl_0_5_percent")?.pass? "✓" : "✗"}</td>
                     </tr>
                   );
                 })}
