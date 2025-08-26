@@ -30,6 +30,8 @@ jobs:
 
       - name: Build page
         run: yarn build
+        env:
+          VITE_BASE: /trading-checklist/
 
       - name: Deploy 🚀
         uses: JamesIves/github-pages-deploy-action@v4.6.0
