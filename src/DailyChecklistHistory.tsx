@@ -134,12 +134,6 @@ function buildFakeDay(dateISO: string, trader: string): ChecklistDay {
   };
 }
 
-async function loadChecklistDay(trader: string, dateISO: string): Promise<ChecklistDay> {
-  // Replace with: GET /api/checklists?trader=...&date=YYYY-MM-DD
-  await delay(150);
-  return buildFakeDay(dateISO, trader);
-}
-
 async function loadChecklistRange(trader: string, startISO: string, endISO: string): Promise<ChecklistDay[]> {
   // Replace with: GET /api/checklists/range?trader=...&start=YYYY-MM-DD&end=YYYY-MM-DD
   await delay(200);
