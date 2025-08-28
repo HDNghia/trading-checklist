@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import type { PropsWithChildren, ButtonHTMLAttributes, HTMLAttributes } from "react";
-import { Calendar as CalendarIcon, ChevronLeft, ChevronRight, Download, SlidersHorizontal, RefreshCw } from "lucide-react";
+import { Calendar as CalendarIcon, ChevronLeft, ChevronRight, Download, SlidersHorizontal, RefreshCw, Plus, Trash2 } from "lucide-react";
 
 // --- Minimal shadcn-like primitives (fallbacks) ---
 type WithClassName = { className?: string };
@@ -19,7 +19,7 @@ const CardContent: React.FC<PropsWithChildren<HTMLAttributes<HTMLDivElement> & W
 
 // ========================= Types =========================
 /** One rule's pass/fail with optional metrics */
-type RuleCheck = {
+export type RuleCheck = {
   key: string;                // e.g. "has_sl", "max_trades_per_day"
   title: string;              // label
   description?: string;       // detailed description
@@ -31,7 +31,7 @@ type RuleCheck = {
 };
 
 /** A day's checklist */
-type ChecklistDay = {
+export type ChecklistDay = {
   date: string;               // ISO date (YYYY-MM-DD)
   trader: string;             // trader id/name
   equityOpen?: number;        // equity at day open
@@ -40,6 +40,33 @@ type ChecklistDay = {
   journalUrl?: string | null; // link to daily journal
   rules: RuleCheck[];         // rule outcomes
   tradesCount: number;        // trades executed
+  // extra telemetry for demo (so we can evaluate rules with custom settings)
+  _telemetry?: { riskPerTradePct: number; allHaveSL: boolean };
+};
+
+export type RuleSession = { start: string; end: string; tz: string; label?: string };
+export type RuleSettings = {
+  maxRiskPercent: number;        // e.g. 5
+  maxPositions: number;          // e.g. 5
+  maxLotsPerTrade: number;       // e.g. 1 (placeholder in demo)
+  maxSLPercent: number;          // e.g. 2
+  maxDailyDDPercent: number;     // e.g. 5
+  minRRAllowed: number;          // e.g. 1.5
+  allowedSessions: RuleSession[];
+  violateOutsideSession: boolean;
+  maxSLTPChangePercent: number;  // e.g. 10
+  requireFirstTradeGoal: boolean; // enforce pre-trade plan rule
+};
+
+export type PreTradePlan = {
+  mood: string;
+  plannedTrades: number;
+  plannedWindows: { start: string; end: string; label?: string }[];
+  expectedHighTime?: string; // HH:mm
+  expectedLowTime?: string;  // HH:mm
+  rrTarget: number;
+  notes?: string;
+  submittedAt: string; // ISO datetime
 };
 
 // ========================= Utilities =========================
@@ -57,8 +84,65 @@ function badgeColor(pass: boolean, level?: RuleCheck["level"]) {
 
 function pct(n: number) { return `${Math.round(n * 100)}%`; }
 
-// ========================= Mock API (replace with real calls) =========================
+// ========================= API + Mock (single definitions) =========================
+export type APIRule = { id: number; account_number: number; name: string; description?: string; condition: any; created_at?: string; updated_at?: string };
+
 const delay = (ms: number) => new Promise((res) => setTimeout(res, ms));
+
+async function fetchRulesFromBackend(accountNumber: number): Promise<APIRule[]> {
+  const res = await fetch(`/api/trade-rules?account_number=${accountNumber}`);
+  if (!res.ok) throw new Error(`Fetch rules failed ${res.status}`);
+  return await res.json();
+}
+
+function parseRulesToSettings(rules: APIRule[], base: RuleSettings): RuleSettings {
+  const out: RuleSettings = { ...base };
+  const byName = (needle: string) => rules.find(r => r.name.toLowerCase().includes(needle.toLowerCase()));
+  const maxRisk = byName("Max Risk");
+  if (maxRisk?.condition?.max_risk_percent != null) out.maxRiskPercent = Number(maxRisk.condition.max_risk_percent);
+  const noOver = byName("No Overtrade");
+  if (noOver?.condition?.max_positions != null) out.maxPositions = Number(noOver.condition.max_positions);
+  if (noOver?.condition?.max_lots_per_trade != null) out.maxLotsPerTrade = Number(noOver.condition.max_lots_per_trade);
+  const maxSL = byName("Max SL");
+  if (maxSL?.condition?.max_sl_percent != null) out.maxSLPercent = Number(maxSL.condition.max_sl_percent);
+  const maxDD = byName("Max Daily DD");
+  if (maxDD?.condition?.max_dd_percent != null) out.maxDailyDDPercent = Number(maxDD.condition.max_dd_percent);
+  const rr = byName("RR Target Declared");
+  if (rr?.condition?.min_rr_allowed != null) out.minRRAllowed = Number(rr.condition.min_rr_allowed);
+  const sessions = byName("Allowed Trading Sessions");
+  if (sessions?.condition?.allowed_sessions) out.allowedSessions = sessions.condition.allowed_sessions as RuleSession[];
+  if (sessions?.condition?.violate_outside_session != null) out.violateOutsideSession = !!sessions.condition.violate_outside_session;
+  const first = byName("First Trade Must Have Goal");
+  if (first?.condition?.require_first_trade_goal != null) out.requireFirstTradeGoal = !!first.condition.require_first_trade_goal;
+  const change = byName("Max SL/TP Change");
+  if (change?.condition?.max_sl_tp_change_percent != null) out.maxSLTPChangePercent = Number(change.condition.max_sl_tp_change_percent);
+  return out;
+}
+
+async function saveSettingsToBackend(accountNumber: number, settings: RuleSettings, existing: APIRule[] | null) {
+  if (!existing) throw new Error("No server rules loaded yet");
+  const upd = (name: string, conditionPatch: any) => {
+    const r = existing.find(x => x.name.toLowerCase().includes(name.toLowerCase()));
+    if (!r) return Promise.resolve(undefined);
+    return fetch(`/api/trade-rules/${r.id}`,{ method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ condition: { ...r.condition, ...conditionPatch } }) });
+  };
+  await Promise.all([
+    upd("Max Risk", { max_risk_percent: settings.maxRiskPercent, apply_to: "all_trades" }),
+    upd("No Overtrade", { max_positions: settings.maxPositions, max_lots_per_trade: settings.maxLotsPerTrade }),
+    upd("Max SL", { max_sl_percent: settings.maxSLPercent, apply_to: "all_positions", enforce_strict: true }),
+    upd("Max Daily DD", { max_dd_percent: settings.maxDailyDDPercent, window: "daily", apply_to: "account" }),
+    upd("RR Target Declared", { min_rr_allowed: settings.minRRAllowed, require_rr_declared: true, apply_to: "all_trades" }),
+    upd("Allowed Trading Sessions", { allowed_sessions: settings.allowedSessions, violate_outside_session: settings.violateOutsideSession, apply_to: "all_trades" }),
+    upd("First Trade Must Have Goal", { require_first_trade_goal: settings.requireFirstTradeGoal, window: "daily", apply_to: "first_trade_of_day" }),
+    upd("Max SL/TP Change", { max_sl_tp_change_percent: settings.maxSLTPChangePercent, apply_to: "all_positions" }),
+  ]);
+}
+
+async function savePlanToBackend(accountNumber: number, dateISO: string, plan: PreTradePlan) {
+  try {
+    await fetch(`/api/pretrade-plans`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ account_number: accountNumber, date: dateISO, plan }) });
+  } catch (e) { console.warn('Save plan failed', e); }
+}
 
 function rng(seed: number) {
   // simple xorshift rng for deterministic mock
@@ -68,8 +152,8 @@ function rng(seed: number) {
   };
 }
 
-/** Build a fake day based on date + trader for the demo */
-function buildFakeDay(dateISO: string, trader: string): ChecklistDay {
+/** Build a fake day based on date + trader + settings for the demo */
+function buildFakeDay(dateISO: string, trader: string, settings: RuleSettings): ChecklistDay {
   const base = parseInt(dateISO.replace(/-/g, ""), 10) + trader.length * 97;
   const r = rng(base);
   const trades = Math.floor(r() * 5); // 0..4
@@ -80,24 +164,24 @@ function buildFakeDay(dateISO: string, trader: string): ChecklistDay {
 
   const rules: RuleCheck[] = [
     {
-      key: "max_risk_2_percent",
-      title: "Max Risk 2%",
-      description: "Không được để rủi ro vượt quá 2% tổng tài khoản",
-      pass: riskPerTrade <= 2,
+      key: "max_risk_percent",
+      title: `Max Risk ${settings.maxRiskPercent}%`,
+      description: "Không được để rủi ro vượt quá % tổng tài khoản",
+      pass: riskPerTrade <= settings.maxRiskPercent,
       value: `${riskPerTrade}%`,
-      limit: "2%",
-      level: riskPerTrade <= 2 ? "info" : "error",
-      notes: riskPerTrade <= 2 ? "Within risk limit" : "Risk exceeded 2% threshold",
+      limit: `${settings.maxRiskPercent}%`,
+      level: riskPerTrade <= settings.maxRiskPercent ? "info" : "error",
+      notes: riskPerTrade <= settings.maxRiskPercent ? "Within risk limit" : "Risk exceeded",
     },
     {
       key: "no_overtrade",
       title: "No Overtrade",
       description: "Không được mở quá nhiều vị thế cùng lúc",
-      pass: trades <= 3,
+      pass: trades <= settings.maxPositions,
       value: trades,
-      limit: 3,
-      level: trades <= 3 ? "info" : "warning",
-      notes: trades <= 3 ? "Position count OK" : `Too many positions: ${trades}`,
+      limit: settings.maxPositions,
+      level: trades <= settings.maxPositions ? "info" : "warning",
+      notes: trades <= settings.maxPositions ? "Position count OK" : `Too many positions: ${trades}`,
     },
     {
       key: "stop_loss_required",
@@ -108,14 +192,41 @@ function buildFakeDay(dateISO: string, trader: string): ChecklistDay {
       notes: allHaveSL ? "All trades have SL" : "Some trades missing SL",
     },
     {
-      key: "max_sl_0_5_percent",
-      title: "Max SL 0.5%",
-      description: "Stop loss không được vượt quá 0.5% tổng tài khoản",
-      pass: riskPerTrade <= 0.5,
+      key: "max_sl_percent",
+      title: `Max SL ${settings.maxSLPercent}%`,
+      description: "Stop loss không được vượt quá % tổng tài khoản",
+      pass: riskPerTrade <= settings.maxSLPercent,
       value: `${riskPerTrade}%`,
-      limit: "0.5%",
-      level: riskPerTrade <= 0.5 ? "info" : "error",
-      notes: riskPerTrade <= 0.5 ? "SL within limit" : "SL exceeded 0.5%",
+      limit: `${settings.maxSLPercent}%`,
+      level: riskPerTrade <= settings.maxSLPercent ? "info" : "error",
+      notes: riskPerTrade <= settings.maxSLPercent ? "SL within limit" : "SL exceeded",
+    },
+    {
+      key: "max_daily_dd",
+      title: `Max Daily DD ${settings.maxDailyDDPercent}%`,
+      description: "Sụt giảm vốn trong ngày không vượt quá % equity đầu ngày",
+      pass: (dd ?? 0) <= settings.maxDailyDDPercent,
+      value: `${dd}%`,
+      limit: `${settings.maxDailyDDPercent}%`,
+      level: (dd ?? 0) <= settings.maxDailyDDPercent ? "info" : "error",
+      notes: (dd ?? 0) <= settings.maxDailyDDPercent ? "DD within limit" : "DD exceeded",
+    },
+    // Placeholders (can't be evaluated without live order telemetry)
+    {
+      key: "session_allowed",
+      title: "Allowed Trading Sessions",
+      description: "Chỉ được phép giao dịch trong các khung giờ đã định",
+      pass: true,
+      level: "info",
+      notes: settings.allowedSessions.map(s => `${s.label || ""} ${s.start}-${s.end} (${s.tz})`).join("; ") || "No sessions set",
+    },
+    {
+      key: "max_sl_tp_change_percent",
+      title: `Max SL/TP Change ${settings.maxSLTPChangePercent}%`,
+      description: "Không được thay đổi SL/TP quá % so với khoảng cách ban đầu",
+      pass: true,
+      level: "warning",
+      notes: "Realtime check required",
     },
   ];
 
@@ -131,10 +242,11 @@ function buildFakeDay(dateISO: string, trader: string): ChecklistDay {
     journalUrl: hasJournal ? `https://journals.example/${trader}/${dateISO}` : null,
     rules,
     tradesCount: trades,
+    _telemetry: { riskPerTradePct: riskPerTrade, allHaveSL },
   };
 }
 
-async function loadChecklistRange(trader: string, startISO: string, endISO: string): Promise<ChecklistDay[]> {
+async function loadChecklistRange(trader: string, startISO: string, endISO: string, settings: RuleSettings): Promise<ChecklistDay[]> {
   // Replace with: GET /api/checklists/range?trader=...&start=YYYY-MM-DD&end=YYYY-MM-DD
   await delay(200);
   const days: string[] = [];
@@ -144,7 +256,7 @@ async function loadChecklistRange(trader: string, startISO: string, endISO: stri
     const iso = d.toISOString().slice(0, 10);
     days.push(iso);
   }
-  return days.map(iso => buildFakeDay(iso, trader));
+  return days.map(iso => buildFakeDay(iso, trader, settings));
 }
 
 // Pure builder to help testing
@@ -171,12 +283,8 @@ function exportCsv(rows: any[], filename = "checklists.csv") {
 }
 
 /**
- * LUMIR – Behavioral Performance Hub (Wireframe Prototype)
+ * LUMIR – Behavioral Performance Hub (Prototype with Pre‑trade Plan + Rule Settings)
  * Self‑contained React + Tailwind component (no external libs)
- * - Header (overview)
- * - Left: Past (Checklist, Rule Breakdown, History)
- * - Right: Present (Realtime Alerts, Mindset, Consistency)
- * - Bottom: Future (Actions, Recovery, Learning, Roadmap, Benchmark, Predictive)
  */
 
 export default function DailyChecklistHistory() {
@@ -185,76 +293,104 @@ export default function DailyChecklistHistory() {
   const [focusDate, setFocusDate] = useState(ymd(new Date()));
   const [rangeDays, setRangeDays] = useState(7); // last 7 days by default
   const [list, setList] = useState<ChecklistDay[]>([]);
-  // Compare panel removed
   const [loading, setLoading] = useState(false);
+
+  // Pre‑trade plan map by date
+  const [plans, setPlans] = useState<Record<string, PreTradePlan | undefined>>({});
+
+  // Rule settings (defaults reflect your JSON rules)
+  const [settings, setSettings] = useState<RuleSettings>({
+    maxRiskPercent: 5,
+    maxPositions: 5,
+    maxLotsPerTrade: 1,
+    maxSLPercent: 2,
+    maxDailyDDPercent: 5,
+    minRRAllowed: 1.5,
+    allowedSessions: [
+      { start: "07:00", end: "11:00", tz: "Asia/Ho_Chi_Minh", label: "VN" },
+      { start: "19:00", end: "23:00", tz: "Asia/Ho_Chi_Minh", label: "VN" },
+    ],
+    violateOutsideSession: true,
+    maxSLTPChangePercent: 10,
+    requireFirstTradeGoal: true,
+  });
+
+  // NEW: tie to backend rules
+  const accountNumber = 5440722; // from your dataset
+  const [serverRules, setServerRules] = useState<APIRule[] | null>(null);
+  async function handleLoadRules() {
+    try {
+      const rules = await fetchRulesFromBackend(accountNumber);
+      setServerRules(rules);
+      setSettings(prev => parseRulesToSettings(rules, prev));
+    } catch (e) { console.warn(e); }
+  }
+  async function handleSaveSettings() {
+    try { await saveSettingsToBackend(accountNumber, settings, serverRules); }
+    catch (e) { console.warn(e); }
+  }
 
   const startISO = addDays(focusDate, -(rangeDays - 1));
   const endISO = focusDate;
 
-  // ---- Mock data for legacy interface ----
+  // ---- Mock header data (kept from original) ----
   const user = { name: "Alex Nguyen", level: "Disciplined" };
   const today = new Date().toISOString().slice(0, 10);
   const passRate7 = [62, 71, 78, 74, 81, 68, 72];
   const dd7 = [2.1, 1.3, 3.2, 2.6, 1.9, 2.4, 1.6];
+  const daily = { compliance: 0.72, trades: 8, maxDD: 0.025 };
 
-  const daily = {
-    compliance: 0.72,
-    trades: 8,
-    maxDD: 0.025,
-  };
-
-  const rules = [
-    { rule: "Max Risk ≤ 2%/trade", status: "PASS", impact: "High", fix: "—" },
-    { rule: "Stop Loss Required", status: "ERROR", impact: "High", fix: "Enable SL template on order" },
-    { rule: "No Overtrade (>10 trades/day)", status: "PASS", impact: "Med", fix: "—" },
-    { rule: "RRR ≥ 1.5", status: "WARNING", impact: "Med", fix: "Adjust TP/SL to reach 1:1.5" },
-  ];
-
-  const alerts = [
-    { stage: "pre", sev: "alert", msg: "Checklist chưa hoàn tất. Hoàn tất trước khi mở lệnh.", time: "09:12" },
-    { stage: "in", sev: "watch", msg: "Bạn vừa nới SL 12%. Giữ kỷ luật nhé.", time: "10:43" },
-    { stage: "post", sev: "info", msg: "Lệnh lỗ nhưng đúng quy trình – Good loss.", time: "15:20" },
-  ];
-
-  const roadmap = [
-    { key: "7d", label: "7 days", progress: 80 },
-    { key: "30d", label: "30 days", progress: 20 },
-    { key: "13w", label: "13 weeks", progress: 0 },
-  ];
-
-  // ---- Enhanced interface logic ----
+  // ---- Load data whenever period/settings changes ----
   useEffect(() => {
     setLoading(true);
-    loadChecklistRange(trader, startISO, endISO)
+    loadChecklistRange(trader, startISO, endISO, settings)
       .then(setList)
       .finally(() => setLoading(false));
-  }, [trader, startISO, endISO]);
+  }, [trader, startISO, endISO, settings]);
 
-  // compare loaders removed
+  // Compute list with extra "RR Target Declared" rule based on plan + settings
+  const listWithExtras = useMemo(() => {
+    return list.map((d) => {
+      const plan = plans[d.date];
+      const rrOk = !!plan && plan.rrTarget >= settings.minRRAllowed && !!plan.mood && plan.plannedTrades > 0 && plan.plannedWindows.length > 0 && !!plan.expectedHighTime && !!plan.expectedLowTime;
+      const rrRule: RuleCheck = {
+        key: "rr_target_declared",
+        title: `RR Target Declared (≥ ${settings.minRRAllowed})`,
+        description: "Phải khai báo mục tiêu RR/plan cho lệnh đầu tiên trong ngày",
+        pass: settings.requireFirstTradeGoal ? rrOk : true,
+        value: plan ? `RR ${plan.rrTarget}` : null,
+        limit: settings.minRRAllowed,
+        level: rrOk ? "info" : "warning",
+        notes: plan ? `${plan.plannedTrades} trades • ${plan.mood}` : "Chưa khai báo mục tiêu RR/plan",
+      };
+      return { ...d, rules: [...d.rules, rrRule] };
+    });
+  }, [list, plans, settings.minRRAllowed, settings.requireFirstTradeGoal]);
 
-  const currentDay = useMemo(() => list.find(d => d.date === focusDate) || null, [list, focusDate]);
+  const currentDay = useMemo(() => listWithExtras.find(d => d.date === focusDate) || null, [listWithExtras, focusDate]);
 
   // Aggregate compliance in range
   const summary = useMemo(() => {
-    if (!list.length) return { passRate: 0, days: 0 };
-    const rates = list.map(d => d.rules.filter(r => r.pass).length / d.rules.length);
+    if (!listWithExtras.length) return { passRate: 0, days: 0 };
+    const rates = listWithExtras.map(d => d.rules.filter(r => r.pass).length / d.rules.length);
     const avg = rates.reduce((a, b) => a + b, 0) / rates.length;
-    return { passRate: avg, days: list.length };
-  }, [list]);
+    return { passRate: avg, days: listWithExtras.length };
+  }, [listWithExtras]);
 
   const exportRows = useMemo(() => {
-    return list.map(d => ({
+    return listWithExtras.map(d => ({
       date: d.date,
       trader: d.trader,
       trades: d.tradesCount,
       ddPercent: d.ddPercent,
       passRate: Math.round(100 * (d.rules.filter(r => r.pass).length / d.rules.length))
     }));
-  }, [list]);
+  }, [listWithExtras]);
 
   // ========== Lightweight runtime tests (never block UI) ==========
   useEffect(() => {
     try {
+      // Existing tests
       const csv = buildCsv([
         { a: "plain", b: "x" },
         { a: "has,comma", b: "multi\nline" },
@@ -263,10 +399,17 @@ export default function DailyChecklistHistory() {
       console.assert(csv.split("\n").length === 4, "CSV should have header + 3 rows");
       console.assert(csv.includes('"has,comma"'), "Comma field must be quoted");
       console.assert(csv.includes('"quote ""q"""'), "Quotes must be doubled when quoted");
+
+      // Added tests
+      console.assert(buildCsv([]) === "", "Empty rows should return empty string");
+      const one = buildCsv([{ x: 1, y: "a" }]);
+      console.assert(one === "x,y\n1,a", "Single simple row serialization");
     } catch (e) {
       console.warn("CSV self-test failed", e);
     }
   }, []);
+
+  const planForFocus = plans[focusDate];
 
   return (
     <div className="mx-auto max-w-6xl p-4 space-y-4 bg-white">
@@ -281,7 +424,6 @@ export default function DailyChecklistHistory() {
             <Badge tone="success">Level: {user.level}</Badge>
             <Badge tone="neutral">Compliance Today: {(daily.compliance * 100).toFixed(0)}%</Badge>
             <Button onClick={() => exportCsv(exportRows)}><Download className="w-4 h-4" />Export CSV</Button>
-            {/* Compare toggle removed */}
           </div>
         </div>
         <div className="mt-3 grid grid-cols-1 md:grid-cols-3 gap-3">
@@ -303,150 +445,93 @@ export default function DailyChecklistHistory() {
         </div>
       </header>
 
-      {/* BOTTOM – Future */}
-      <section className="grid grid-cols-2 gap-4">
-        <LegacyCard title="Rule Breakdown">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="text-left text-gray-500">
-                <th className="py-2">Rule</th>
-                <th className="py-2">Status</th>
-                <th className="py-2">Impact</th>
-                <th className="py-2">Next action</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rules.map((r, i) => (
-                <tr key={i} className="border-t text-gray-800">
-                  <td className="py-2 pr-2">{r.rule}</td>
-                  <td className="py-2 pr-2">
-                    {r.status === "PASS" && <Badge tone="success">PASS</Badge>}
-                    {r.status === "WARNING" && <Badge tone="warning">WARNING</Badge>}
-                    {r.status === "ERROR" && <Badge tone="danger">ERROR</Badge>}
-                  </td>
-                  <td className="py-2 pr-2 text-gray-600">{r.impact}</td>
-                  <td className="py-2 text-gray-700">{r.fix}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+      {/* PRE‑TRADE PLAN + SETTINGS */}
+      <section className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <LegacyCard title="Pre‑Trade Plan (First trade – bắt buộc nếu bật)">
+          <PreTradePlanForm
+            dateISO={focusDate}
+            settings={settings}
+            value={planForFocus}
+            onSave={(p) => { setPlans(prev => ({ ...prev, [focusDate]: p })); savePlanToBackend(accountNumber, focusDate, p).catch(console.error); }}
+          />
         </LegacyCard>
-        <LegacyCard title="Realtime Alerts (Present – Awareness)">
-          <div className="space-y-2">
-            {alerts.map((a, idx) => (
-              <div key={idx} className="flex items-start gap-3 rounded-lg border p-3">
-                <StagePill stage={a.stage} />
-                <SeverityDot sev={a.sev} />
-                <div className="flex-1 text-sm text-gray-800">{a.msg}</div>
-                <span className="text-xs text-gray-500">{a.time}</span>
-                <button className="ml-2 text-xs text-indigo-600 hover:underline">Resolve</button>
-              </div>
-            ))}
+
+        <LegacyCard title="Rule Settings (editable)">
+          <RuleSettingsForm
+            value={settings}
+            onChange={setSettings}
+          />
+          <div className="mt-3 flex gap-2">
+            <Button onClick={handleLoadRules}>Tải từ backend</Button>
+            <Button className="bg-indigo-600 text-white border-indigo-600 hover:bg-indigo-700" onClick={handleSaveSettings}>Lưu lên backend</Button>
           </div>
-        </LegacyCard>
-
-        <LegacyCard title="Roadmap & Milestones">
-          <div className="space-y-3">
-            {roadmap.map((m) => (
-              <div key={m.key} className="flex items-center gap-3">
-                <div className="w-24 text-sm text-gray-700">{m.label}</div>
-                <Progress value={m.progress} />
-                <button className="ml-auto text-xs rounded-md border px-2 py-1 hover:bg-gray-50">Open</button>
-              </div>
-            ))}
-          </div>
-        </LegacyCard>
-
-        <LegacyCard title="Consistency Score (This week)">
-          <div className="flex items-center gap-4">
-            <Radial value={78} label="Score" />
-            <div className="text-sm text-gray-700">
-              <p>Weekly discipline badge: <Badge tone="success">Disciplined</Badge></p>
-              <p className="mt-1">Compared to personal baseline: <span className="text-emerald-600 font-medium">+6%</span></p>
-            </div>
-          </div>
-        </LegacyCard>
-
-        <LegacyCard title="Mindset Log">
-          <MindsetForm />
-        </LegacyCard>
-
-        <LegacyCard title="Action Tracker (Future – Guidance)">
-          <ul className="text-sm text-gray-800 list-disc pl-5 space-y-1">
-            <li>Enable SL template on order <Badge tone="neutral">To‑do</Badge></li>
-            <li>Reduce size 20% after win‑streak <Badge tone="neutral">To‑do</Badge></li>
-            <li>Lock daily loss at 3% <Badge tone="success">Done</Badge></li>
-          </ul>
-        </LegacyCard>
-        <LegacyCard title="Learning Module Suggestions">
-          <ul className="text-sm text-gray-800 list-disc pl-5 space-y-1">
-            <li>Overtrade: 5‑minute checklist before entry</li>
-            <li>R/R Tuning: set TP/SL for ≥1:1.5 on your setup</li>
-            <li>Emotional reset: 10‑minute cooldown routine</li>
-          </ul>
-        </LegacyCard>
-
-        <LegacyCard title="Community Benchmark">
-          <div className="text-sm text-gray-700">Your pass rate: <span className="font-semibold">71%</span> • Community median: <span className="font-semibold">65%</span> • Percentile: <span className="font-semibold">78th</span></div>
         </LegacyCard>
       </section>
 
-      {/* MAIN GRID */}
+      {/* MAIN CONTROLS */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        {/* LEFT – Enhanced Interface */}
         <Card>
-        <CardContent>
-          <div className="grid md:grid-cols-3 gap-3">
-            <div className="col-span-1">
-              <label className="text-xs text-gray-500">Trader</label>
-              <div className="mt-1 flex gap-2">
-                <input value={trader} onChange={e => setTrader((e.target as HTMLInputElement).value)} placeholder="trader id" className="w-full px-3 py-2 rounded-xl border border-gray-200" />
+          <CardContent>
+            <div className="grid md:grid-cols-3 gap-3">
+              <div className="col-span-1">
+                <label className="text-xs text-gray-500">Trader</label>
+                <div className="mt-1 flex gap-2">
+                  <input value={trader} onChange={e => setTrader((e.target as HTMLInputElement).value)} placeholder="trader id" className="w-full px-3 py-2 rounded-xl border border-gray-200" />
+                </div>
+              </div>
+              <div className="col-span-1">
+                <label className="text-xs text-gray-500">Focus date</label>
+                <div className="mt-1 flex items-center gap-2">
+                  <CalendarIcon className="w-4 h-4 text-gray-500" />
+                  <input type="date" className="px-3 py-2 rounded-xl border border-gray-200" value={focusDate} onChange={e => setFocusDate((e.target as HTMLInputElement).value)} />
+                </div>
+              </div>
+              <div className="col-span-1">
+                <label className="text-xs text-gray-500">Range</label>
+                <select value={rangeDays} onChange={e => setRangeDays(parseInt((e.target as HTMLSelectElement).value))} className="mt-1 px-3 py-2 rounded-xl border border-gray-200">
+                  <option value={7}>Last 7 days</option>
+                  <option value={14}>Last 14 days</option>
+                  <option value={30}>Last 30 days</option>
+                  <option value={60}>Last 60 days</option>
+                </select>
               </div>
             </div>
-            <div className="col-span-1">
-              <label className="text-xs text-gray-500">Focus date</label>
-              <div className="mt-1 flex items-center gap-2">
-                <CalendarIcon className="w-4 h-4 text-gray-500" />
-                <input type="date" className="px-3 py-2 rounded-xl border border-gray-200" value={focusDate} onChange={e => setFocusDate((e.target as HTMLInputElement).value)} />
+            <div className="mt-3 flex items-center justify-between">
+              <div className="text-sm text-gray-600 flex items-center gap-2">
+                <SlidersHorizontal className="w-4 h-4" />
+                {loading ? "Loading…" : `${summary.days} days, avg pass rate ${Math.round(summary.passRate * 100)}%`}
+              </div>
+              <div className="flex gap-2">
+                <Button onClick={() => setFocusDate(addDays(focusDate, -1))}><ChevronLeft className="w-4 h-4" />Prev</Button>
+                <Button onClick={() => setFocusDate(addDays(focusDate, +1))}><ChevronRight className="w-4 h-4" />Next</Button>
+                <Button onClick={() => setFocusDate(ymd(new Date()))}><RefreshCw className="w-4 h-4" />Today</Button>
               </div>
             </div>
-            <div className="col-span-1">
-              <label className="text-xs text-gray-500">Range</label>
-              <select value={rangeDays} onChange={e => setRangeDays(parseInt((e.target as HTMLSelectElement).value))} className="mt-1 px-3 py-2 rounded-xl border border-gray-200">
-                <option value={7}>Last 7 days</option>
-                <option value={14}>Last 14 days</option>
-                <option value={30}>Last 30 days</option>
-                <option value={60}>Last 60 days</option>
-              </select>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader>
+            <div className="flex items-center justify-between">
+              <div className="font-medium">{fmt(new Date(startISO + "T00:00:00Z"))} → {fmt(new Date(endISO + "T00:00:00Z"))}</div>
+              <div className="text-sm text-gray-500">Pick a day to inspect</div>
             </div>
-          </div>
-          <div className="mt-3 flex items-center justify-between">
-            <div className="text-sm text-gray-600 flex items-center gap-2">
-              <SlidersHorizontal className="w-4 h-4" />
-              {loading ? "Loading…" : `${summary.days} days, avg pass rate ${Math.round(summary.passRate * 100)}%`}
-            </div>
-            <div className="flex gap-2">
-              <Button onClick={() => setFocusDate(addDays(focusDate, -1))}><ChevronLeft className="w-4 h-4" />Prev</Button>
-              <Button onClick={() => setFocusDate(addDays(focusDate, +1))}><ChevronRight className="w-4 h-4" />Next</Button>
-              <Button onClick={() => setFocusDate(ymd(new Date()))}><RefreshCw className="w-4 h-4" />Today</Button>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-      <Card>
-            <CardHeader>
-              <div className="flex items-center justify-between">
-                <div className="font-medium">{fmt(new Date(startISO + "T00:00:00Z"))} → {fmt(new Date(endISO + "T00:00:00Z"))}</div>
-                <div className="text-sm text-gray-500">Pick a day to inspect</div>
-              </div>
-            </CardHeader>
+          </CardHeader>
+          <CardContent>
+            <CalendarStrip startISO={startISO} endISO={endISO} selectedISO={focusDate} onPick={iso => setFocusDate(iso)} />
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* CURRENT DAY */}
+      <div className="space-y-3">
+        {settings.requireFirstTradeGoal && !planForFocus && (
+          <Card>
             <CardContent>
-              <CalendarStrip startISO={startISO} endISO={endISO} selectedISO={focusDate} onPick={iso => setFocusDate(iso)} />
+              <div className="text-sm text-amber-700">⚠️ Bạn chưa khai báo mục tiêu RR/plan cho ngày {fmt(new Date(focusDate + "T00:00:00Z"))}. Hoàn tất form ở trên trước khi vào lệnh đầu tiên.</div>
             </CardContent>
           </Card>
-      </div>
-      <div className="space-y-3">
-        
+        )}
+
         {currentDay ? (
           <DayChecklistCard day={currentDay} />
         ) : (
@@ -454,6 +539,7 @@ export default function DailyChecklistHistory() {
         )}
       </div>
 
+      {/* OVERVIEW TABLE */}
       <Card>
         <CardHeader>
           <div className="flex items-center justify-between">
@@ -470,14 +556,15 @@ export default function DailyChecklistHistory() {
                   <th className="py-2 pr-4">Trades</th>
                   <th className="py-2 pr-4">Pass rate</th>
                   <th className="py-2 pr-4">DD%</th>
-                  <th className="py-2 pr-4">Max Risk 2%</th>
+                  <th className="py-2 pr-4">Max Risk</th>
                   <th className="py-2 pr-4">No Overtrade</th>
                   <th className="py-2 pr-4">SL Required</th>
-                  <th className="py-2 pr-4">Max SL 0.5%</th>
+                  <th className="py-2 pr-4">Max SL</th>
+                  <th className="py-2 pr-4">RR Declared</th>
                 </tr>
               </thead>
               <tbody>
-                {list.map(d => {
+                {listWithExtras.map(d => {
                   const passRate = Math.round(100 * (d.rules.filter(r => r.pass).length / d.rules.length));
                   const get = (k: string) => d.rules.find(x => x.key === k);
                   return (
@@ -486,10 +573,11 @@ export default function DailyChecklistHistory() {
                       <td className="py-2 pr-4">{d.tradesCount}</td>
                       <td className="py-2 pr-4 font-medium">{passRate}%</td>
                       <td className={`py-2 pr-4 ${d.ddPercent && d.ddPercent >= 3 ? 'text-rose-600 font-medium' : 'text-gray-700'}`}>{d.ddPercent?.toFixed(1)}%</td>
-                      <td className="py-2 pr-4">{get("max_risk_2_percent")?.pass ? "✓" : "✗"}</td>
+                      <td className="py-2 pr-4">{get("max_risk_percent")?.pass ? "✓" : "✗"}</td>
                       <td className="py-2 pr-4">{get("no_overtrade")?.pass ? "✓" : "✗"}</td>
                       <td className="py-2 pr-4">{get("stop_loss_required")?.pass ? "✓" : "✗"}</td>
-                      <td className="py-2 pr-4">{get("max_sl_0_5_percent")?.pass ? "✓" : "✗"}</td>
+                      <td className="py-2 pr-4">{get("max_sl_percent")?.pass ? "✓" : "✗"}</td>
+                      <td className="py-2 pr-4">{get("rr_target_declared")?.pass ? "✓" : "✗"}</td>
                     </tr>
                   );
                 })}
@@ -498,13 +586,13 @@ export default function DailyChecklistHistory() {
           </div>
         </CardContent>
       </Card>
-      
+
       <div className="text-xs text-gray-500">Tip: Replace mock loaders with your backend endpoints. See comments in code.</div>
     </div>
   );
 }
 
-// ========================= New Components =========================
+// ========================= Components =========================
 const DayRuleRow: React.FC<{ rc: RuleCheck }> = ({ rc }) => (
   <div className="flex items-start justify-between gap-3 py-1.5">
     <div className="min-w-0">
@@ -574,7 +662,6 @@ const CalendarStrip: React.FC<{ startISO: string, endISO: string, selectedISO: s
     );
   };
 
-/* ---------------- UI Pieces ---------------- */
 function LegacyCard({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <section className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
@@ -603,8 +690,6 @@ function Badge({ tone = "neutral", children }: { tone?: "neutral" | "success" | 
   return <span className={`inline-block rounded-md border px-2 py-0.5 text-xs font-medium ${map[tone]}`}>{children}</span>;
 }
 
-// Removed unused Metric component
-
 function StagePill({ stage }: { stage: string }) {
   const map: Record<string, string> = { pre: "bg-sky-100 text-sky-700", in: "bg-amber-100 text-amber-700", post: "bg-fuchsia-100 text-fuchsia-700" };
   return <span className={`text-xs px-2 py-0.5 rounded-md ${map[stage] || "bg-gray-100 text-gray-700"}`}>{stage.toUpperCase()}</span>;
@@ -618,7 +703,7 @@ function SeverityDot({ sev }: { sev: string }) {
 function Progress({ value }: { value: number }) {
   return (
     <div className="flex-1 h-2 rounded-full bg-gray-100">
-      <div className="h-2 rounded-full bg-emerald-500" style={{ width: `${Math.max(0, Math.min(100, value))}%` }} />
+      <div className="h-2 rounded-full" style={{ width: `${Math.max(0, Math.min(100, value))}%`, backgroundColor: `rgb(79,70,229)` }} />
     </div>
   );
 }
@@ -677,11 +762,148 @@ function Radial({ value, label }: { value: number; label?: string }) {
   return (
     <div className="flex items-center gap-3">
       <svg width="72" height="72" viewBox="0 0 72 72">
-        <circle cx="36" cy="36" r={radius} className="fill-none stroke-gray-200" strokeWidth={8} />
-        <circle cx="36" cy="36" r={radius} className="fill-none stroke-indigo-500" strokeWidth={8} strokeDasharray={`${dash} ${circ}`} strokeLinecap="round" transform="rotate(-90 36 36)" />
+        <circle cx="36" cy="36" r={radius} className="fill-none" stroke="#e5e7eb" strokeWidth={8} />
+        <circle cx="36" cy="36" r={radius} className="fill-none" stroke="#6366f1" strokeWidth={8} strokeDasharray={`${dash} ${circ}`} strokeLinecap="round" transform="rotate(-90 36 36)" />
         <text x="36" y="40" textAnchor="middle" className="fill-gray-900 text-sm font-semibold">{clamped}%</text>
       </svg>
       {label && <div className="text-xs text-gray-500">{label}</div>}
     </div>
+  );
+}
+
+// ---------------- Forms -----------------
+function PreTradePlanForm({ dateISO, settings, value, onSave }: { dateISO: string; settings: RuleSettings; value?: PreTradePlan; onSave: (p: PreTradePlan) => void }) {
+  const [mood, setMood] = useState(value?.mood || "Calm");
+  const [plannedTrades, setPlannedTrades] = useState<number>(value?.plannedTrades ?? 1);
+  const [rrTarget, setRrTarget] = useState<number>(value?.rrTarget ?? settings.minRRAllowed);
+  const [expectedHighTime, setExpectedHighTime] = useState<string>(value?.expectedHighTime || "");
+  const [expectedLowTime, setExpectedLowTime] = useState<string>(value?.expectedLowTime || "");
+  const [plannedWindows, setPlannedWindows] = useState<{ start: string; end: string; label?: string }[]>(value?.plannedWindows?.length ? value.plannedWindows : [{ start: "09:00", end: "10:00", label: "Setup A" }]);
+  const [notes, setNotes] = useState<string>(value?.notes || "");
+
+  const addWindow = () => setPlannedWindows(ws => [...ws, { start: "", end: "", label: "" }]);
+  const removeWindow = (idx: number) => setPlannedWindows(ws => ws.filter((_, i) => i !== idx));
+  const save = () => {
+    const plan: PreTradePlan = { mood, plannedTrades: Math.max(0, plannedTrades), plannedWindows: plannedWindows.filter(w => w.start && w.end), expectedHighTime, expectedLowTime, rrTarget: Math.max(0, rrTarget), notes, submittedAt: new Date().toISOString() };
+    onSave(plan);
+  };
+
+  return (
+    <div className="grid grid-cols-1 gap-3 text-sm">
+      <div className="grid md:grid-cols-3 gap-3">
+        <label className="flex flex-col gap-1">
+          <span className="text-gray-700">Tâm trạng hôm nay</span>
+          <select className="rounded-md border border-gray-300 px-3 py-2" value={mood} onChange={e => setMood(e.target.value)}>
+            {['Calm','Focused','Anxious','Euphoric','Stressed'].map(m => <option key={m}>{m}</option>)}
+          </select>
+        </label>
+        <label className="flex flex-col gap-1">
+          <span className="text-gray-700">Số lệnh dự kiến hôm nay</span>
+          <input type="number" className="rounded-md border border-gray-300 px-3 py-2" min={0} value={plannedTrades} onChange={e => setPlannedTrades(parseInt(e.target.value || '0'))} />
+        </label>
+        <label className="flex flex-col gap-1">
+          <span className="text-gray-700">Mục tiêu RR tối thiểu</span>
+          <input type="number" step="0.1" className="rounded-md border border-gray-300 px-3 py-2" value={rrTarget} onChange={e => setRrTarget(parseFloat(e.target.value || '0'))} />
+          <span className="text-xs text-gray-500">Yêu cầu ≥ {settings.minRRAllowed}</span>
+        </label>
+      </div>
+
+      <div className="grid md:grid-cols-2 gap-3">
+        <label className="flex flex-col gap-1">
+          <span className="text-gray-700">Thời điểm tạo ĐỈNH của ngày</span>
+          <input type="time" className="rounded-md border border-gray-300 px-3 py-2" value={expectedHighTime} onChange={e => setExpectedHighTime(e.target.value)} />
+        </label>
+        <label className="flex flex-col gap-1">
+          <span className="text-gray-700">Thời điểm tạo ĐÁY của ngày</span>
+          <input type="time" className="rounded-md border border-gray-300 px-3 py-2" value={expectedLowTime} onChange={e => setExpectedLowTime(e.target.value)} />
+        </label>
+      </div>
+
+      <div>
+        <div className="flex items-center justify-between mb-1">
+          <span className="text-gray-700">Khung thời gian sẽ vào lệnh</span>
+          <Button onClick={addWindow}><Plus className="w-4 h-4"/>Thêm khung</Button>
+        </div>
+        <div className="space-y-2">
+          {plannedWindows.map((w, idx) => (
+            <div key={idx} className="grid md:grid-cols-4 gap-2">
+              <input placeholder="Label" className="rounded-md border border-gray-300 px-3 py-2" value={w.label || ''} onChange={e => setPlannedWindows(ws => ws.map((it,i)=> i===idx?{...it,label:e.target.value}:it))} />
+              <input type="time" className="rounded-md border border-gray-300 px-3 py-2" value={w.start} onChange={e => setPlannedWindows(ws => ws.map((it,i)=> i===idx?{...it,start:e.target.value}:it))} />
+              <input type="time" className="rounded-md border border-gray-300 px-3 py-2" value={w.end} onChange={e => setPlannedWindows(ws => ws.map((it,i)=> i===idx?{...it,end:e.target.value}:it))} />
+              <Button className="justify-center" onClick={() => removeWindow(idx)}><Trash2 className="w-4 h-4"/>Remove</Button>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <label className="flex flex-col gap-1">
+        <span className="text-gray-700">Ghi chú</span>
+        <textarea className="rounded-md border border-gray-300 px-3 py-2" rows={3} value={notes} onChange={e => setNotes(e.target.value)} />
+      </label>
+
+      <div className="flex items-center gap-3">
+        <Button className="bg-indigo-600 text-white border-indigo-600 hover:bg-indigo-700" onClick={save}>Lưu Pre‑trade Plan</Button>
+        {value && <span className="text-xs text-gray-500">Đã lưu lúc {new Date(value.submittedAt).toLocaleTimeString()}</span>}
+      </div>
+    </div>
+  );
+}
+
+function RuleSettingsForm({ value, onChange }: { value: RuleSettings; onChange: (v: RuleSettings) => void }) {
+  const v = value;
+  const set = (patch: Partial<RuleSettings>) => onChange({ ...v, ...patch });
+  const updateSession = (idx: number, patch: Partial<RuleSession>) => {
+    const arr = v.allowedSessions.slice();
+    arr[idx] = { ...arr[idx], ...patch };
+    set({ allowedSessions: arr });
+  };
+  const addSession = () => set({ allowedSessions: [...v.allowedSessions, { start: "", end: "", tz: "Asia/Ho_Chi_Minh", label: "" }] });
+  const removeSession = (idx: number) => set({ allowedSessions: v.allowedSessions.filter((_, i) => i !== idx) });
+
+  return (
+    <div className="grid grid-cols-1 gap-3 text-sm">
+      <div className="grid md:grid-cols-3 gap-3">
+        <NumberField label="Max risk %/trade" value={v.maxRiskPercent} step={0.1} onChange={(n) => set({ maxRiskPercent: n })} />
+        <NumberField label="Max positions" value={v.maxPositions} step={1} onChange={(n) => set({ maxPositions: Math.max(0, Math.round(n)) })} />
+        <NumberField label="Max lots/trade" value={v.maxLotsPerTrade} step={0.01} onChange={(n) => set({ maxLotsPerTrade: Math.max(0, n) })} />
+        <NumberField label="Max SL %" value={v.maxSLPercent} step={0.1} onChange={(n) => set({ maxSLPercent: n })} />
+        <NumberField label="Max daily DD %" value={v.maxDailyDDPercent} step={0.1} onChange={(n) => set({ maxDailyDDPercent: n })} />
+        <NumberField label="Min RR allowed" value={v.minRRAllowed} step={0.1} onChange={(n) => set({ minRRAllowed: n })} />
+        <NumberField label="Max SL/TP change %" value={v.maxSLTPChangePercent} step={1} onChange={(n) => set({ maxSLTPChangePercent: n })} />
+        <label className="flex items-center gap-2 mt-2">
+          <input type="checkbox" className="rounded border-gray-300" checked={v.requireFirstTradeGoal} onChange={e => set({ requireFirstTradeGoal: e.target.checked })} />
+          <span>Bắt buộc khai báo mục tiêu RR cho lệnh đầu tiên</span>
+        </label>
+      </div>
+
+      <div>
+        <div className="flex items-center justify-between mb-1">
+          <span className="text-gray-700">Allowed sessions</span>
+          <Button onClick={addSession}><Plus className="w-4 h-4"/>Add session</Button>
+        </div>
+        <div className="space-y-2">
+          {v.allowedSessions.map((s, idx) => (
+            <div key={idx} className="grid md:grid-cols-5 gap-2">
+              <input placeholder="Label" className="rounded-md border border-gray-300 px-3 py-2" value={s.label || ''} onChange={e => updateSession(idx, { label: e.target.value })} />
+              <input type="time" className="rounded-md border border-gray-300 px-3 py-2" value={s.start} onChange={e => updateSession(idx, { start: e.target.value })} />
+              <input type="time" className="rounded-md border border-gray-300 px-3 py-2" value={s.end} onChange={e => updateSession(idx, { end: e.target.value })} />
+              <input placeholder="Time zone" className="rounded-md border border-gray-300 px-3 py-2" value={s.tz} onChange={e => updateSession(idx, { tz: e.target.value })} />
+              <Button className="justify-center" onClick={() => removeSession(idx)}><Trash2 className="w-4 h-4"/>Remove</Button>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="text-xs text-gray-500">Các thay đổi được áp dụng ngay vào đánh giá rule trong bảng bên dưới. Khi kết nối backend, hãy gửi PATCH/PUT các trường rule tương ứng.</div>
+    </div>
+  );
+}
+
+function NumberField({ label, value, onChange, step = 1 }: { label: string; value: number; onChange: (n: number) => void; step?: number }) {
+  return (
+    <label className="flex flex-col gap-1">
+      <span className="text-gray-700">{label}</span>
+      <input type="number" step={step} className="rounded-md border border-gray-300 px-3 py-2" value={value} onChange={(e) => onChange(parseFloat(e.target.value || '0'))} />
+    </label>
   );
 }
