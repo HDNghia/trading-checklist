@@ -119,7 +119,7 @@ function parseRulesToSettings(rules: APIRule[], base: RuleSettings): RuleSetting
   return out;
 }
 
-async function saveSettingsToBackend(accountNumber: number, settings: RuleSettings, existing: APIRule[] | null) {
+async function saveSettingsToBackend( settings: RuleSettings, existing: APIRule[] | null) {
   if (!existing) throw new Error("No server rules loaded yet");
   const upd = (name: string, conditionPatch: any) => {
     const r = existing.find(x => x.name.toLowerCase().includes(name.toLowerCase()));
@@ -326,7 +326,7 @@ export default function DailyChecklistHistory() {
     } catch (e) { console.warn(e); }
   }
   async function handleSaveSettings() {
-    try { await saveSettingsToBackend(accountNumber, settings, serverRules); }
+    try { await saveSettingsToBackend(settings, serverRules); }
     catch (e) { console.warn(e); }
   }
 
@@ -449,7 +449,6 @@ export default function DailyChecklistHistory() {
       <section className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <LegacyCard title="Pre‑Trade Plan (First trade – bắt buộc nếu bật)">
           <PreTradePlanForm
-            dateISO={focusDate}
             settings={settings}
             value={planForFocus}
             onSave={(p) => { setPlans(prev => ({ ...prev, [focusDate]: p })); savePlanToBackend(accountNumber, focusDate, p).catch(console.error); }}
@@ -690,48 +689,6 @@ function Badge({ tone = "neutral", children }: { tone?: "neutral" | "success" | 
   return <span className={`inline-block rounded-md border px-2 py-0.5 text-xs font-medium ${map[tone]}`}>{children}</span>;
 }
 
-function StagePill({ stage }: { stage: string }) {
-  const map: Record<string, string> = { pre: "bg-sky-100 text-sky-700", in: "bg-amber-100 text-amber-700", post: "bg-fuchsia-100 text-fuchsia-700" };
-  return <span className={`text-xs px-2 py-0.5 rounded-md ${map[stage] || "bg-gray-100 text-gray-700"}`}>{stage.toUpperCase()}</span>;
-}
-
-function SeverityDot({ sev }: { sev: string }) {
-  const map: Record<string, string> = { info: "bg-sky-500", watch: "bg-amber-500", alert: "bg-orange-500", critical: "bg-red-500" };
-  return <span className={`mt-1 inline-block h-2.5 w-2.5 rounded-full ${map[sev] || "bg-gray-400"}`} />;
-}
-
-function Progress({ value }: { value: number }) {
-  return (
-    <div className="flex-1 h-2 rounded-full bg-gray-100">
-      <div className="h-2 rounded-full" style={{ width: `${Math.max(0, Math.min(100, value))}%`, backgroundColor: `rgb(79,70,229)` }} />
-    </div>
-  );
-}
-
-function MindsetForm() {
-  const [pre, setPre] = useState("Calm");
-  const [post, setPost] = useState("Focused");
-  return (
-    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
-      <label className="flex flex-col gap-1">
-        <span className="text-gray-700">Pre‑trade mood</span>
-        <select className="rounded-md border border-gray-300 px-3 py-2" value={pre} onChange={(e) => setPre(e.target.value)}>
-          {['Calm', 'Focused', 'Anxious', 'Euphoric', 'Stressed'].map(m => <option key={m}>{m}</option>)}
-        </select>
-      </label>
-      <label className="flex flex-col gap-1">
-        <span className="text-gray-700">Post‑trade mood</span>
-        <select className="rounded-md border border-gray-300 px-3 py-2" value={post} onChange={(e) => setPost(e.target.value)}>
-          {['Calm', 'Focused', 'Anxious', 'Euphoric', 'Stressed'].map(m => <option key={m}>{m}</option>)}
-        </select>
-      </label>
-      <div className="md:col-span-2">
-        <button className="rounded-lg bg-indigo-600 px-4 py-2 text-white font-semibold hover:bg-indigo-700">Save mood log</button>
-      </div>
-    </div>
-  );
-}
-
 function Sparkline({ data, width = 120, height = 40, strokeClass = "stroke-emerald-500" }: { data: number[]; width?: number; height?: number; strokeClass?: string }) {
   const path = useMemo(() => {
     if (!data || data.length === 0) return "";
@@ -754,25 +711,8 @@ function Sparkline({ data, width = 120, height = 40, strokeClass = "stroke-emera
   );
 }
 
-function Radial({ value, label }: { value: number; label?: string }) {
-  const clamped = Math.max(0, Math.min(100, value));
-  const radius = 28;
-  const circ = 2 * Math.PI * radius;
-  const dash = (clamped / 100) * circ;
-  return (
-    <div className="flex items-center gap-3">
-      <svg width="72" height="72" viewBox="0 0 72 72">
-        <circle cx="36" cy="36" r={radius} className="fill-none" stroke="#e5e7eb" strokeWidth={8} />
-        <circle cx="36" cy="36" r={radius} className="fill-none" stroke="#6366f1" strokeWidth={8} strokeDasharray={`${dash} ${circ}`} strokeLinecap="round" transform="rotate(-90 36 36)" />
-        <text x="36" y="40" textAnchor="middle" className="fill-gray-900 text-sm font-semibold">{clamped}%</text>
-      </svg>
-      {label && <div className="text-xs text-gray-500">{label}</div>}
-    </div>
-  );
-}
-
 // ---------------- Forms -----------------
-function PreTradePlanForm({ dateISO, settings, value, onSave }: { dateISO: string; settings: RuleSettings; value?: PreTradePlan; onSave: (p: PreTradePlan) => void }) {
+function PreTradePlanForm({ settings, value, onSave }: { settings: RuleSettings; value?: PreTradePlan; onSave: (p: PreTradePlan) => void }) {
   const [mood, setMood] = useState(value?.mood || "Calm");
   const [plannedTrades, setPlannedTrades] = useState<number>(value?.plannedTrades ?? 1);
   const [rrTarget, setRrTarget] = useState<number>(value?.rrTarget ?? settings.minRRAllowed);
