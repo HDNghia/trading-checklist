@@ -453,6 +453,7 @@ export default function DailyChecklistHistory() {
   // NEW: per-entry trade journals by date
   const [journals, setJournals] = useState<Record<string, TradeJournalEntry[]>>({});
   const [settingsHistory, setSettingsHistory] = useState<SettingsHistoryEntry[]>([]);
+  const [planHistory, setPlanHistory] = useState<Record<string, PlanHistoryEntry[]>>({});
 
   // Coaching dialog
   const [showCoaching, setShowCoaching] = useState(false);
@@ -600,6 +601,8 @@ export default function DailyChecklistHistory() {
   }
   function handlePlanSaved(p: PreTradePlan) {
     setPlans(prev => ({ ...prev, [focusDate]: p }));
+    const entry: PlanHistoryEntry = { id: `${focusDate}-${Date.now()}`, savedAt: new Date().toISOString(), plan: p };
+    setPlanHistory(prev => ({ ...prev, [focusDate]: [entry, ...(prev[focusDate] || [])].slice(0, 20) }));
     savePlanToBackend(accountNumber, focusDate, p).catch(console.error);
   }
 
@@ -650,6 +653,26 @@ export default function DailyChecklistHistory() {
             value={planForFocus}
             onSave={handlePlanSaved}
           />
+          {(planHistory[focusDate]?.length ?? 0) > 0 && (
+            <div className="mt-3">
+              <h4 className="text-sm font-semibold text-gray-900 mb-2">Pre‑Trade Plan Save History</h4>
+              <div className="space-y-2">
+                {planHistory[focusDate]!.map(h => (
+                  <Card key={h.id} className="border border-gray-200">
+                    <CardContent>
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="text-sm text-gray-700"><span className="font-medium">{new Date(h.savedAt).toLocaleTimeString()}</span> • RR ≥ {h.plan.rrTarget}</div>
+                          <div className="text-xs text-gray-500">Trades: {h.plan.plannedTrades} • Mood: {h.plan.mood}</div>
+                          <div className="text-xs text-gray-500">Windows: {h.plan.plannedWindows.map(w => `${w.label || ''} ${w.start}-${w.end}`).join('; ')}</div>
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+            </div>
+          )}
         </LegacyCard>
 
         <LegacyCard title="Rule Settings (editable)">
