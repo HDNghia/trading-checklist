@@ -600,7 +600,6 @@ export default function DailyChecklistHistory() {
   }
   function handlePlanSaved(p: PreTradePlan) {
     setPlans(prev => ({ ...prev, [focusDate]: p }));
-    const entry: PlanHistoryEntry = { id: `${focusDate}-${Date.now()}`, savedAt: new Date().toISOString(), plan: p };
     savePlanToBackend(accountNumber, focusDate, p).catch(console.error);
   }
 
