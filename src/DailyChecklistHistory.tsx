@@ -761,7 +761,7 @@ function PreTradePlanForm({ settings, value, onSave }: { settings: RuleSettings;
 
       <div>
         <div className="flex items-center justify-between mb-1">
-          <span className="text-gray-700">Trading Time Windows</span>
+          <span className="text-gray-700">Expected Market Entry Times</span>
                       <Button onClick={addWindow}><Plus className="w-4 h-4"/>Add Window</Button>
         </div>
         <div className="space-y-2">
