@@ -166,7 +166,7 @@ function buildFakeDay(dateISO: string, trader: string, settings: RuleSettings): 
     {
       key: "max_risk_percent",
       title: `Max Risk ${settings.maxRiskPercent}%`,
-      description: "Không được để rủi ro vượt quá % tổng tài khoản",
+      description: "Risk per trade must not exceed % of total account",
       pass: riskPerTrade <= settings.maxRiskPercent,
       value: `${riskPerTrade}%`,
       limit: `${settings.maxRiskPercent}%`,
@@ -176,7 +176,7 @@ function buildFakeDay(dateISO: string, trader: string, settings: RuleSettings): 
     {
       key: "no_overtrade",
       title: "No Overtrade",
-      description: "Không được mở quá nhiều vị thế cùng lúc",
+      description: "Must not open too many positions at once",
       pass: trades <= settings.maxPositions,
       value: trades,
       limit: settings.maxPositions,
@@ -186,7 +186,7 @@ function buildFakeDay(dateISO: string, trader: string, settings: RuleSettings): 
     {
       key: "stop_loss_required",
       title: "Stop Loss Required",
-      description: "Bắt buộc phải đặt stop loss cho mọi giao dịch",
+      description: "Stop loss must be set for every trade",
       pass: allHaveSL,
       level: allHaveSL ? "info" : "error",
       notes: allHaveSL ? "All trades have SL" : "Some trades missing SL",
@@ -194,7 +194,7 @@ function buildFakeDay(dateISO: string, trader: string, settings: RuleSettings): 
     {
       key: "max_sl_percent",
       title: `Max SL ${settings.maxSLPercent}%`,
-      description: "Stop loss không được vượt quá % tổng tài khoản",
+      description: "Stop loss must not exceed % of total account",
       pass: riskPerTrade <= settings.maxSLPercent,
       value: `${riskPerTrade}%`,
       limit: `${settings.maxSLPercent}%`,
@@ -204,7 +204,7 @@ function buildFakeDay(dateISO: string, trader: string, settings: RuleSettings): 
     {
       key: "max_daily_dd",
       title: `Max Daily DD ${settings.maxDailyDDPercent}%`,
-      description: "Sụt giảm vốn trong ngày không vượt quá % equity đầu ngày",
+      description: "Daily drawdown must not exceed % of opening equity",
       pass: (dd ?? 0) <= settings.maxDailyDDPercent,
       value: `${dd}%`,
       limit: `${settings.maxDailyDDPercent}%`,
@@ -223,7 +223,7 @@ function buildFakeDay(dateISO: string, trader: string, settings: RuleSettings): 
     {
       key: "max_sl_tp_change_percent",
       title: `Max SL/TP Change ${settings.maxSLTPChangePercent}%`,
-      description: "Không được thay đổi SL/TP quá % so với khoảng cách ban đầu",
+      description: "SL/TP changes must not exceed % of initial distance",
       pass: true,
       level: "warning",
       notes: "Realtime check required",
@@ -356,12 +356,12 @@ export default function DailyChecklistHistory() {
       const rrRule: RuleCheck = {
         key: "rr_target_declared",
         title: `RR Target Declared (≥ ${settings.minRRAllowed})`,
-        description: "Phải khai báo mục tiêu RR/plan cho lệnh đầu tiên trong ngày",
+        description: "Must declare RR target/plan for first trade of the day",
         pass: settings.requireFirstTradeGoal ? rrOk : true,
         value: plan ? `RR ${plan.rrTarget}` : null,
         limit: settings.minRRAllowed,
         level: rrOk ? "info" : "warning",
-        notes: plan ? `${plan.plannedTrades} trades • ${plan.mood}` : "Chưa khai báo mục tiêu RR/plan",
+        notes: plan ? `${plan.plannedTrades} trades • ${plan.mood}` : "RR target/plan not declared",
       };
       return { ...d, rules: [...d.rules, rrRule] };
     });
@@ -447,7 +447,7 @@ export default function DailyChecklistHistory() {
 
       {/* PRE‑TRADE PLAN + SETTINGS */}
       <section className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <LegacyCard title="Pre‑Trade Plan (First trade – bắt buộc nếu bật)">
+        <LegacyCard title="Pre‑Trade Plan (First trade – required if enabled)">
           <PreTradePlanForm
             settings={settings}
             value={planForFocus}
@@ -461,8 +461,8 @@ export default function DailyChecklistHistory() {
             onChange={setSettings}
           />
           <div className="mt-3 flex gap-2">
-            <Button onClick={handleLoadRules}>Tải từ backend</Button>
-            <Button className="bg-indigo-600 text-white border-indigo-600 hover:bg-indigo-700" onClick={handleSaveSettings}>Lưu lên backend</Button>
+            <Button onClick={handleLoadRules}>Load Data</Button>
+            <Button className="bg-indigo-600 text-white border-indigo-600 hover:bg-indigo-700" onClick={handleSaveSettings}>Save to Backend</Button>
           </div>
         </LegacyCard>
       </section>
@@ -526,7 +526,7 @@ export default function DailyChecklistHistory() {
         {settings.requireFirstTradeGoal && !planForFocus && (
           <Card>
             <CardContent>
-              <div className="text-sm text-amber-700">⚠️ Bạn chưa khai báo mục tiêu RR/plan cho ngày {fmt(new Date(focusDate + "T00:00:00Z"))}. Hoàn tất form ở trên trước khi vào lệnh đầu tiên.</div>
+              <div className="text-sm text-amber-700">⚠️ You haven't declared RR target/plan for {fmt(new Date(focusDate + "T00:00:00Z"))}. Complete the form above before your first trade.</div>
             </CardContent>
           </Card>
         )}
@@ -732,37 +732,37 @@ function PreTradePlanForm({ settings, value, onSave }: { settings: RuleSettings;
     <div className="grid grid-cols-1 gap-3 text-sm">
       <div className="grid md:grid-cols-3 gap-3">
         <label className="flex flex-col gap-1">
-          <span className="text-gray-700">Tâm trạng hôm nay</span>
+          <span className="text-gray-700">Today's Mood</span>
           <select className="rounded-md border border-gray-300 px-3 py-2" value={mood} onChange={e => setMood(e.target.value)}>
             {['Calm','Focused','Anxious','Euphoric','Stressed'].map(m => <option key={m}>{m}</option>)}
           </select>
         </label>
         <label className="flex flex-col gap-1">
-          <span className="text-gray-700">Số lệnh dự kiến hôm nay</span>
+          <span className="text-gray-700">Expected Trades Today</span>
           <input type="number" className="rounded-md border border-gray-300 px-3 py-2" min={0} value={plannedTrades} onChange={e => setPlannedTrades(parseInt(e.target.value || '0'))} />
         </label>
         <label className="flex flex-col gap-1">
-          <span className="text-gray-700">Mục tiêu RR tối thiểu</span>
+          <span className="text-gray-700">Minimum RR Target</span>
           <input type="number" step="0.1" className="rounded-md border border-gray-300 px-3 py-2" value={rrTarget} onChange={e => setRrTarget(parseFloat(e.target.value || '0'))} />
-          <span className="text-xs text-gray-500">Yêu cầu ≥ {settings.minRRAllowed}</span>
+                     <span className="text-xs text-gray-500">Requires ≥ {settings.minRRAllowed}</span>
         </label>
       </div>
 
       <div className="grid md:grid-cols-2 gap-3">
         <label className="flex flex-col gap-1">
-          <span className="text-gray-700">Thời điểm tạo ĐỈNH của ngày</span>
+          <span className="text-gray-700">Expected HIGH Time of Day</span>
           <input type="time" className="rounded-md border border-gray-300 px-3 py-2" value={expectedHighTime} onChange={e => setExpectedHighTime(e.target.value)} />
         </label>
         <label className="flex flex-col gap-1">
-          <span className="text-gray-700">Thời điểm tạo ĐÁY của ngày</span>
+          <span className="text-gray-700">Expected LOW Time of Day</span>
           <input type="time" className="rounded-md border border-gray-300 px-3 py-2" value={expectedLowTime} onChange={e => setExpectedLowTime(e.target.value)} />
         </label>
       </div>
 
       <div>
         <div className="flex items-center justify-between mb-1">
-          <span className="text-gray-700">Khung thời gian sẽ vào lệnh</span>
-          <Button onClick={addWindow}><Plus className="w-4 h-4"/>Thêm khung</Button>
+          <span className="text-gray-700">Trading Time Windows</span>
+                      <Button onClick={addWindow}><Plus className="w-4 h-4"/>Add Window</Button>
         </div>
         <div className="space-y-2">
           {plannedWindows.map((w, idx) => (
@@ -777,13 +777,13 @@ function PreTradePlanForm({ settings, value, onSave }: { settings: RuleSettings;
       </div>
 
       <label className="flex flex-col gap-1">
-        <span className="text-gray-700">Ghi chú</span>
+                  <span className="text-gray-700">Notes</span>
         <textarea className="rounded-md border border-gray-300 px-3 py-2" rows={3} value={notes} onChange={e => setNotes(e.target.value)} />
       </label>
 
       <div className="flex items-center gap-3">
-        <Button className="bg-indigo-600 text-white border-indigo-600 hover:bg-indigo-700" onClick={save}>Lưu Pre‑trade Plan</Button>
-        {value && <span className="text-xs text-gray-500">Đã lưu lúc {new Date(value.submittedAt).toLocaleTimeString()}</span>}
+        <Button className="bg-indigo-600 text-white border-indigo-600 hover:bg-indigo-700" onClick={save}>Save Pre‑trade Plan</Button>
+        {value && <span className="text-xs text-gray-500">Saved at {new Date(value.submittedAt).toLocaleTimeString()}</span>}
       </div>
     </div>
   );
@@ -812,7 +812,7 @@ function RuleSettingsForm({ value, onChange }: { value: RuleSettings; onChange: 
         <NumberField label="Max SL/TP change %" value={v.maxSLTPChangePercent} step={1} onChange={(n) => set({ maxSLTPChangePercent: n })} />
         <label className="flex items-center gap-2 mt-2">
           <input type="checkbox" className="rounded border-gray-300" checked={v.requireFirstTradeGoal} onChange={e => set({ requireFirstTradeGoal: e.target.checked })} />
-          <span>Bắt buộc khai báo mục tiêu RR cho lệnh đầu tiên</span>
+          <span>Require RR target declaration for first trade</span>
         </label>
       </div>
 
@@ -834,7 +834,7 @@ function RuleSettingsForm({ value, onChange }: { value: RuleSettings; onChange: 
         </div>
       </div>
 
-      <div className="text-xs text-gray-500">Các thay đổi được áp dụng ngay vào đánh giá rule trong bảng bên dưới. Khi kết nối backend, hãy gửi PATCH/PUT các trường rule tương ứng.</div>
+              <div className="text-xs text-gray-500">Changes are applied immediately to rule evaluation in the table below.</div>
     </div>
   );
 }
