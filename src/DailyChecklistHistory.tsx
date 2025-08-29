@@ -452,7 +452,6 @@ export default function DailyChecklistHistory() {
   const [plans, setPlans] = useState<Record<string, PreTradePlan | undefined>>({});
   // NEW: per-entry trade journals by date
   const [journals, setJournals] = useState<Record<string, TradeJournalEntry[]>>({});
-  const [settingsHistory, setSettingsHistory] = useState<SettingsHistoryEntry[]>([]);
   const [planHistory, setPlanHistory] = useState<Record<string, PlanHistoryEntry[]>>({});
 
   // Coaching dialog
@@ -490,9 +489,6 @@ export default function DailyChecklistHistory() {
   async function handleSaveSettings() {
     try { await saveSettingsToBackend(settings, serverRules); }
     catch (e) { console.warn(e); }
-    // append settings history
-    const entry: SettingsHistoryEntry = { id: `${Date.now()}`, savedAt: new Date().toISOString(), settings };
-    setSettingsHistory(prev => [entry, ...prev].slice(0, 20));
   }
 
   const startISO = addDays(focusDate, -(rangeDays - 1));
@@ -683,21 +679,7 @@ export default function DailyChecklistHistory() {
           <div className="mt-3 flex gap-2">
             <Button onClick={handleLoadRules}>Load data</Button>
             <Button className="bg-indigo-600 text-white border-indigo-600 hover:bg-indigo-700" onClick={handleSaveSettings}>Save to backend</Button>
-            </div>
-          {settingsHistory.length > 0 && (
-            <div className="mt-3">
-              <h4 className="text-sm font-semibold text-gray-900 mb-2">Rule Settings Save History</h4>
-              <div className="space-y-2">
-                {settingsHistory.map(h => (
-                  <Card key={h.id} className="border border-gray-200">
-                    <CardContent>
-                      <div className="text-sm text-gray-700"><span className="font-medium">{new Date(h.savedAt).toLocaleTimeString()}</span> • MaxRisk {h.settings.maxRiskPercent}% • MaxPos {h.settings.maxPositions} • MaxSL {h.settings.maxSLPercent}% • MinRR {h.settings.minRRAllowed}</div>
-                    </CardContent>
-          </Card>
-                ))}
-              </div>
-            </div>
-          )}
+          </div>
         </LegacyCard>
       </section>
 
