@@ -74,17 +74,17 @@ export type TradeJournalEntry = {
   id: string;
   createdAt: string; // ISO datetime
   mood: 'Calm' | 'Focused' | 'Anxious' | 'Euphoric' | 'Stressed';
-  conditions: string; // các yếu tố, điều kiện muốn vào lệnh
-  entry: number; // giá entry
-  lots: number;  // khối lượng
-  sl: number;    // giá stop loss
-  rr: number;    // tỷ lệ RR dự kiến
-  valuePerPoint: number; // giá trị tiền cho mỗi 1 đơn vị giá *mỗi lot*
-  equityAtEntry?: number; // equity tham chiếu (nếu có)
-  riskCash?: number;      // tiền có thể mất nếu hit SL
-  riskPct?: number;       // % equity có thể mất
-  profitAtTP?: number;    // tiền có thể được nếu đạt TP (RR * risk)
-  lossAtSL?: number;      // tiền mất nếu chạm SL (=risk)
+  conditions: string; // entry factors/conditions for taking the trade
+  entry: number; // entry price
+  lots: number;  // position size (lots)
+  sl: number;    // stop loss price
+  rr: number;    // expected risk-reward ratio
+  valuePerPoint: number; // cash value per 1 price unit per lot
+  equityAtEntry?: number; // reference equity (if available)
+  riskCash?: number;      // cash risk if SL is hit
+  riskPct?: number;       // % of equity that can be lost
+  profitAtTP?: number;    // potential profit at TP (RR * risk)
+  lossAtSL?: number;      // loss at SL (= risk)
 };
 
 export type PlanHistoryEntry = { id: string; savedAt: string; plan: PreTradePlan };
@@ -191,7 +191,7 @@ function buildFakeDay(dateISO: string, trader: string, settings: RuleSettings): 
     {
       key: "max_risk_percent",
       title: `Max Risk ${settings.maxRiskPercent}%`,
-      description: "Không được để rủi ro vượt quá % tổng tài khoản",
+      description: "Risk per trade must not exceed % of total account",
       pass: riskPerTrade <= settings.maxRiskPercent,
       value: `${riskPerTrade}%`,
       limit: `${settings.maxRiskPercent}%`,
@@ -201,7 +201,7 @@ function buildFakeDay(dateISO: string, trader: string, settings: RuleSettings): 
     {
       key: "no_overtrade",
       title: "No Overtrade",
-      description: "Không được mở quá nhiều vị thế cùng lúc",
+      description: "Must not open too many positions at once",
       pass: trades <= settings.maxPositions,
       value: trades,
       limit: settings.maxPositions,
@@ -211,7 +211,7 @@ function buildFakeDay(dateISO: string, trader: string, settings: RuleSettings): 
     {
       key: "stop_loss_required",
       title: "Stop Loss Required",
-      description: "Bắt buộc phải đặt stop loss cho mọi giao dịch",
+      description: "Stop loss must be set for every trade",
       pass: allHaveSL,
       level: allHaveSL ? "info" : "error",
       notes: allHaveSL ? "All trades have SL" : "Some trades missing SL",
@@ -219,7 +219,7 @@ function buildFakeDay(dateISO: string, trader: string, settings: RuleSettings): 
     {
       key: "max_sl_percent",
       title: `Max SL ${settings.maxSLPercent}%`,
-      description: "Stop loss không được vượt quá % tổng tài khoản",
+      description: "Stop loss must not exceed % of total account",
       pass: riskPerTrade <= settings.maxSLPercent,
       value: `${riskPerTrade}%`,
       limit: `${settings.maxSLPercent}%`,
@@ -229,7 +229,7 @@ function buildFakeDay(dateISO: string, trader: string, settings: RuleSettings): 
     {
       key: "max_daily_dd",
       title: `Max Daily DD ${settings.maxDailyDDPercent}%`,
-      description: "Sụt giảm vốn trong ngày không vượt quá % equity đầu ngày",
+      description: "Daily drawdown must not exceed % of opening equity",
       pass: (dd ?? 0) <= settings.maxDailyDDPercent,
       value: `${dd}%`,
       limit: `${settings.maxDailyDDPercent}%`,
@@ -240,7 +240,7 @@ function buildFakeDay(dateISO: string, trader: string, settings: RuleSettings): 
     {
       key: "session_allowed",
       title: "Allowed Trading Sessions",
-      description: "Chỉ được phép giao dịch trong các khung giờ đã định",
+      description: "Only trade within the defined sessions",
       pass: true,
       level: "info",
       notes: settings.allowedSessions.map(s => `${s.label || ""} ${s.start}-${s.end} (${s.tz})`).join("; ") || "No sessions set",
@@ -248,7 +248,7 @@ function buildFakeDay(dateISO: string, trader: string, settings: RuleSettings): 
     {
       key: "max_sl_tp_change_percent",
       title: `Max SL/TP Change ${settings.maxSLTPChangePercent}%`,
-      description: "Không được thay đổi SL/TP quá % so với khoảng cách ban đầu",
+      description: "SL/TP changes must not exceed % of initial distance",
       pass: true,
       level: "warning",
       notes: "Realtime check required",
@@ -316,13 +316,13 @@ function exportCsv(rows: any[], filename = "checklists.csv") {
 type MantraDay = { day: number; theme: string; pre: string[]; inTrade: string[]; post: string[] };
 const COACH_MANTRAS: MantraDay[] = [
   { day: 1, theme: "Initiation / New Start", pre: [
-    "Today I start fresh. I don’t chase yesterday, I create today.",
+    "Today I start fresh. I don't chase yesterday, I create today.",
     "Clarity first, entries second.",
     "My edge begins with patience.",
   ], inTrade: [
     "I follow my plan, not my impulses.",
     "Each click is a choice. I choose discipline.",
-    "I don’t need many trades, only the right ones.",
+    "I don't need many trades, only the right ones.",
   ], post: [
     "I review, I learn, I grow stronger.",
     "Every trade teaches me, win or loss.",
@@ -337,7 +337,7 @@ const COACH_MANTRAS: MantraDay[] = [
     "Patience protects my account.",
     "Harmony over haste.",
   ], post: [
-    "I note what worked, I note what didn’t.",
+    "I note what worked, I note what didn't.",
     "I honor small wins as much as big ones.",
     "Balance today creates consistency tomorrow.",
   ]},
@@ -350,7 +350,7 @@ const COACH_MANTRAS: MantraDay[] = [
     "Ideas come, but rules decide.",
     "I express discipline, not impulsiveness.",
   ], post: [
-    "I record my story of today’s trades.",
+    "I record my story of today's trades.",
     "I turn mistakes into insights.",
     "I celebrate progress, not perfection.",
   ]},
@@ -376,7 +376,7 @@ const COACH_MANTRAS: MantraDay[] = [
     "Volatility is opportunity, not chaos.",
     "Every shift meets my stop and target.",
   ], post: [
-    "I adjust, I don’t chase.",
+    "I adjust, I don't chase.",
     "Change teaches me resilience.",
     "Flexibility today, growth tomorrow.",
   ]},
@@ -391,7 +391,7 @@ const COACH_MANTRAS: MantraDay[] = [
   ], post: [
     "I reflect on how well I protected risk.",
     "Responsibility builds mastery.",
-    "Today’s care compounds tomorrow’s gains.",
+    "Today's care compounds tomorrow's gains.",
   ]},
   { day: 7, theme: "Reflection / Analysis", pre: [
     "Preparation is my first trade.",
@@ -521,22 +521,22 @@ export default function DailyChecklistHistory() {
       const rrRule: RuleCheck = {
         key: "rr_target_declared",
         title: `RR Target Declared (≥ ${settings.minRRAllowed})`,
-        description: "Phải khai báo mục tiêu RR/plan cho lệnh đầu tiên trong ngày",
+        description: "Must declare RR target/plan for first trade of the day",
         pass: settings.requireFirstTradeGoal ? rrOk : true,
         value: plan ? `RR ${plan.rrTarget}` : null,
         limit: settings.minRRAllowed,
         level: rrOk ? "info" : "warning",
-        notes: plan ? `${plan.plannedTrades} trades • ${plan.mood}` : "Chưa khai báo mục tiêu RR/plan",
+        notes: plan ? `${plan.plannedTrades} trades • ${plan.mood}` : "RR target/plan not declared",
       };
       const journalRule: RuleCheck = {
         key: "journal_before_new_trade",
         title: "Journal before new trade",
-        description: "Bắt buộc viết nhật ký trước khi vào lệnh mới",
+        description: "Must write journal before opening a new trade",
         pass: settings.requireJournalBeforeNewTrade ? dayJournals.length > 0 : true,
         value: dayJournals.length,
         limit: settings.requireJournalBeforeNewTrade ? 1 : 0,
         level: (settings.requireJournalBeforeNewTrade && dayJournals.length === 0) ? "warning" : "info",
-        notes: dayJournals.length ? `${dayJournals.length} entries` : "Chưa có nhật ký vào lệnh nào",
+        notes: dayJournals.length ? `${dayJournals.length} entries` : "No pre-entry journal yet",
       };
       return { ...d, rules: [...d.rules, rrRule, journalRule] };
     });
@@ -642,7 +642,7 @@ export default function DailyChecklistHistory() {
 
       {/* PRE‑TRADE PLAN + SETTINGS */}
       <section className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <LegacyCard title="Pre‑Trade Plan (First trade – bắt buộc nếu bật)" extra={
+        <LegacyCard title="Pre‑Trade Plan (First trade – required if enabled)" extra={
           <Button className="bg-indigo-50 border-indigo-200" onClick={() => setShowCoaching(true)} title="Open coaching self-talk"><BookOpen className="w-4 h-4"/>Mantras</Button>
         }>
           <PreTradePlanForm
@@ -658,19 +658,19 @@ export default function DailyChecklistHistory() {
             onChange={setSettings}
           />
           <div className="mt-3 flex gap-2">
-            <Button onClick={handleLoadRules}>Tải từ backend</Button>
-            <Button className="bg-indigo-600 text-white border-indigo-600 hover:bg-indigo-700" onClick={handleSaveSettings}>Lưu lên backend</Button>
-          </div>
+            <Button onClick={handleLoadRules}>Load data</Button>
+            <Button className="bg-indigo-600 text-white border-indigo-600 hover:bg-indigo-700" onClick={handleSaveSettings}>Save to backend</Button>
+            </div>
           {settingsHistory.length > 0 && (
             <div className="mt-3">
-              <h4 className="text-sm font-semibold text-gray-900 mb-2">Lịch sử lưu Rule Settings</h4>
+              <h4 className="text-sm font-semibold text-gray-900 mb-2">Rule Settings Save History</h4>
               <div className="space-y-2">
                 {settingsHistory.map(h => (
                   <Card key={h.id} className="border border-gray-200">
                     <CardContent>
                       <div className="text-sm text-gray-700"><span className="font-medium">{new Date(h.savedAt).toLocaleTimeString()}</span> • MaxRisk {h.settings.maxRiskPercent}% • MaxPos {h.settings.maxPositions} • MaxSL {h.settings.maxSLPercent}% • MinRR {h.settings.minRRAllowed}</div>
                     </CardContent>
-                  </Card>
+          </Card>
                 ))}
               </div>
             </div>
@@ -683,21 +683,21 @@ export default function DailyChecklistHistory() {
         {settings.requireFirstTradeGoal && !planForFocus && (
           <Card>
             <CardContent>
-              <div className="text-sm text-amber-700">⚠️ Bạn chưa khai báo mục tiêu RR/plan cho ngày {fmt(new Date(focusDate + "T00:00:00Z"))}. Hoàn tất form ở trên trước khi vào lệnh đầu tiên.</div>
+              <div className="text-sm text-amber-700">⚠️ You haven't declared an RR target/plan for {fmt(new Date(focusDate + "T00:00:00Z"))}. Complete the form above before your first trade.</div>
             </CardContent>
           </Card>
         )}
         {settings.requireJournalBeforeNewTrade && journalsForFocus.length === 0 && (
           <Card>
             <CardContent>
-              <div className="text-sm text-amber-700">✍️ Bạn cần viết **nhật ký trước lệnh** cho ngày này trước khi vào lệnh mới.</div>
+              <div className="text-sm text-amber-700">✍️ You must write a pre‑entry journal for this day before opening a new trade.</div>
             </CardContent>
           </Card>
         )}
-      </div>
+        </div>
 
       {/* JOURNAL BEFORE NEW TRADE */}
-      <LegacyCard title="Nhật ký trước khi vào lệnh (Per‑Entry Journal)">
+      <LegacyCard title="Pre‑Entry Journal">
         <PreEntryJournalForm
           dateISO={focusDate}
           equity={equityForFocus}
@@ -706,7 +706,7 @@ export default function DailyChecklistHistory() {
         />
         {journalsForFocus.length > 0 && (
           <div className="mt-3">
-            <h4 className="text-sm font-semibold text-gray-900 mb-2">Nhật ký đã lưu hôm nay</h4>
+            <h4 className="text-sm font-semibold text-gray-900 mb-2">Saved journals today</h4>
             <div className="space-y-2">
               {journalsForFocus.map(j => (
                 <Card key={j.id} className="border border-gray-200">
@@ -718,8 +718,8 @@ export default function DailyChecklistHistory() {
                         <div className="text-xs text-gray-700 mt-2">Entry <span className="font-mono">{j.entry}</span> • SL <span className="font-mono">{j.sl}</span> • Lots <span className="font-mono">{j.lots}</span> • RR <span className="font-mono">{j.rr}</span></div>
                         <div className="text-xs text-gray-700">Risk≈ <span className="font-mono">{(j.riskCash ?? 0).toFixed(2)}</span> ({(j.riskPct ?? 0).toFixed(2)}%) • TP P/L≈ <span className="font-mono">{(j.profitAtTP ?? 0).toFixed(2)}</span> • SL P/L≈ <span className="font-mono">{(j.lossAtSL ?? 0).toFixed(2)}</span></div>
                       </div>
-                      <Button onClick={() => removeJournalEntry(j.id)} className="text-rose-600 hover:text-rose-700"><Trash2 className="w-4 h-4"/>Xóa</Button>
-                    </div>
+                      <Button onClick={() => removeJournalEntry(j.id)} className="text-rose-600 hover:text-rose-700"><Trash2 className="w-4 h-4"/>Delete</Button>
+                </div>
                   </CardContent>
                 </Card>
               ))}
@@ -765,8 +765,8 @@ export default function DailyChecklistHistory() {
                 <Button onClick={() => setFocusDate(addDays(focusDate, -1))}><ChevronLeft className="w-4 h-4" />Prev</Button>
                 <Button onClick={() => setFocusDate(addDays(focusDate, +1))}><ChevronRight className="w-4 h-4" />Next</Button>
                 <Button onClick={() => setFocusDate(ymd(new Date()))}><RefreshCw className="w-4 h-4" />Today</Button>
-              </div>
-            </div>
+        </div>
+      </div>
           </CardContent>
         </Card>
         <Card>
@@ -783,7 +783,7 @@ export default function DailyChecklistHistory() {
       </div>
 
       {/* CURRENT DAY */}
-      <div className="space-y-3">
+          <div className="space-y-3">
         {currentDay ? (
           <DayChecklistCard day={currentDay} />
         ) : (
@@ -797,7 +797,7 @@ export default function DailyChecklistHistory() {
           <div className="flex items-center justify-between">
             <div className="font-medium">Overview (last {rangeDays} days)</div>
             <div className="text-sm text-gray-500">Click a row to open</div>
-          </div>
+              </div>
         </CardHeader>
         <CardContent>
           <div className="overflow-x-auto">
@@ -839,7 +839,7 @@ export default function DailyChecklistHistory() {
             </table>
           </div>
         </CardContent>
-      </Card>
+        </Card>
 
       <div className="text-xs text-gray-500">Tip: Replace mock loaders with your backend endpoints. See comments in code.</div>
 
@@ -993,37 +993,37 @@ function PreTradePlanForm({ settings, value, onSave }: { settings: RuleSettings;
     <div className="grid grid-cols-1 gap-3 text-sm">
       <div className="grid md:grid-cols-3 gap-3">
         <label className="flex flex-col gap-1">
-          <span className="text-gray-700">Tâm trạng hôm nay</span>
+          <span className="text-gray-700">Today's Mood</span>
           <select className="rounded-md border border-gray-300 px-3 py-2" value={mood} onChange={e => setMood(e.target.value)}>
             {['Calm','Focused','Anxious','Euphoric','Stressed'].map(m => <option key={m}>{m}</option>)}
           </select>
         </label>
         <label className="flex flex-col gap-1">
-          <span className="text-gray-700">Số lệnh dự kiến hôm nay</span>
+          <span className="text-gray-700">Expected Trades Today</span>
           <input type="number" className="rounded-md border border-gray-300 px-3 py-2" min={0} value={plannedTrades} onChange={e => setPlannedTrades(parseInt(e.target.value || '0'))} />
         </label>
         <label className="flex flex-col gap-1">
-          <span className="text-gray-700">Mục tiêu RR tối thiểu</span>
+          <span className="text-gray-700">Minimum RR Target</span>
           <input type="number" step="0.1" className="rounded-md border border-gray-300 px-3 py-2" value={rrTarget} onChange={e => setRrTarget(parseFloat(e.target.value || '0'))} />
-          <span className="text-xs text-gray-500">Yêu cầu ≥ {settings.minRRAllowed}</span>
+          <span className="text-xs text-gray-500">Requires ≥ {settings.minRRAllowed}</span>
         </label>
       </div>
 
       <div className="grid md:grid-cols-2 gap-3">
         <label className="flex flex-col gap-1">
-          <span className="text-gray-700">Thời điểm tạo ĐỈNH của ngày</span>
+          <span className="text-gray-700">Expected HIGH Time of Day</span>
           <input type="time" className="rounded-md border border-gray-300 px-3 py-2" value={expectedHighTime} onChange={e => setExpectedHighTime(e.target.value)} />
         </label>
         <label className="flex flex-col gap-1">
-          <span className="text-gray-700">Thời điểm tạo ĐÁY của ngày</span>
+          <span className="text-gray-700">Expected LOW Time of Day</span>
           <input type="time" className="rounded-md border border-gray-300 px-3 py-2" value={expectedLowTime} onChange={e => setExpectedLowTime(e.target.value)} />
         </label>
       </div>
 
       <div>
         <div className="flex items-center justify-between mb-1">
-          <span className="text-gray-700">Khung thời gian sẽ vào lệnh</span>
-          <Button onClick={addWindow}><Plus className="w-4 h-4"/>Thêm khung</Button>
+          <span className="text-gray-700">Expected Market Entry Times</span>
+          <Button onClick={addWindow}><Plus className="w-4 h-4"/>Add Window</Button>
         </div>
         <div className="space-y-2">
           {plannedWindows.map((w, idx) => (
@@ -1038,13 +1038,13 @@ function PreTradePlanForm({ settings, value, onSave }: { settings: RuleSettings;
       </div>
 
       <label className="flex flex-col gap-1">
-        <span className="text-gray-700">Ghi chú</span>
+        <span className="text-gray-700">Notes</span>
         <textarea className="rounded-md border border-gray-300 px-3 py-2" rows={3} value={notes} onChange={e => setNotes(e.target.value)} />
       </label>
 
       <div className="flex items-center gap-3">
-        <Button className="bg-indigo-600 text-white border-indigo-600 hover:bg-indigo-700" onClick={save}>Lưu Pre‑trade Plan</Button>
-        {value && <span className="text-xs text-gray-500">Đã lưu lúc {new Date(value.submittedAt).toLocaleTimeString()}</span>}
+        <Button className="bg-indigo-600 text-white border-indigo-600 hover:bg-indigo-700" onClick={save}>Save Pre‑trade Plan</Button>
+        {value && <span className="text-xs text-gray-500">Saved at {new Date(value.submittedAt).toLocaleTimeString()}</span>}
       </div>
     </div>
   );
@@ -1107,8 +1107,8 @@ function PreEntryJournalForm({ dateISO, equity, settings, onSave }: { dateISO: s
       </div>
 
       <label className="flex flex-col gap-1">
-        <span className="text-gray-700">Yếu tố/điều kiện vào lệnh</span>
-        <textarea className="rounded-md border border-gray-300 px-3 py-2" rows={3} value={conditions} onChange={e => setConditions(e.target.value)} placeholder="Ví dụ: Cấu trúc H1 tăng, hồi về demand H15, đồng thuận phiên London…" />
+        <span className="text-gray-700">Entry factors/conditions</span>
+        <textarea className="rounded-md border border-gray-300 px-3 py-2" rows={3} value={conditions} onChange={e => setConditions(e.target.value)} placeholder="e.g., H1 uptrend, pullback to H15 demand, London session confluence…" />
       </label>
 
       <div className="grid md:grid-cols-4 gap-3">
@@ -1133,14 +1133,14 @@ function PreEntryJournalForm({ dateISO, equity, settings, onSave }: { dateISO: s
 
       {(rrTooLow || riskTooHigh) && (
         <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-amber-800 text-sm">
-          {rrTooLow && <div>⚠️ RR hiện tại ({rr.toFixed(2)}) <span className="font-semibold">nhỏ hơn</span> mức tối thiểu yêu cầu {settings.minRRAllowed}.</div>}
-          {riskTooHigh && <div>⚠️ Rủi ro dự kiến ~{riskPct.toFixed(2)}% cao hơn ngưỡng tối đa {settings.maxRiskPercent}%.</div>}
+          {rrTooLow && <div>⚠️ Current RR ({rr.toFixed(2)}) is <span className="font-semibold">below</span> the minimum required {settings.minRRAllowed}.</div>}
+          {riskTooHigh && <div>⚠️ Estimated risk ~{riskPct.toFixed(2)}% exceeds the maximum {settings.maxRiskPercent}%.</div>}
         </div>
       )}
 
-      <div className="flex items-center gap-3">
-        <Button className="bg-indigo-600 text-white border-indigo-600 hover:bg-indigo-700" onClick={save}>Lưu nhật ký trước lệnh</Button>
-        <span className="text-xs text-gray-500">Thời gian: {new Date().toLocaleTimeString()}</span>
+    <div className="flex items-center gap-3">
+        <Button className="bg-indigo-600 text-white border-indigo-600 hover:bg-indigo-700" onClick={save}>Save pre‑entry journal</Button>
+        <span className="text-xs text-gray-500">Time: {new Date().toLocaleTimeString()}</span>
       </div>
     </div>
   );
@@ -1169,11 +1169,11 @@ function RuleSettingsForm({ value, onChange }: { value: RuleSettings; onChange: 
         <NumberField label="Max SL/TP change %" value={v.maxSLTPChangePercent} step={1} onChange={(n) => set({ maxSLTPChangePercent: n })} />
         <label className="flex items-center gap-2 mt-2">
           <input type="checkbox" className="rounded border-gray-300" checked={v.requireFirstTradeGoal} onChange={e => set({ requireFirstTradeGoal: e.target.checked })} />
-          <span>Bắt buộc khai báo mục tiêu RR cho lệnh đầu tiên</span>
+          <span>Require RR target declaration for first trade</span>
         </label>
         <label className="flex items-center gap-2 mt-2">
           <input type="checkbox" className="rounded border-gray-300" checked={v.requireJournalBeforeNewTrade} onChange={e => set({ requireJournalBeforeNewTrade: e.target.checked })} />
-          <span>Bắt buộc viết nhật ký trước khi vào lệnh mới</span>
+          <span>Require writing a journal before opening a new trade</span>
         </label>
       </div>
 
@@ -1195,7 +1195,7 @@ function RuleSettingsForm({ value, onChange }: { value: RuleSettings; onChange: 
         </div>
       </div>
 
-      <div className="text-xs text-gray-500">Các thay đổi được áp dụng ngay vào đánh giá rule trong bảng bên dưới. Khi kết nối backend, hãy gửi PATCH/PUT các trường rule tương ứng.</div>
+      <div className="text-xs text-gray-500">Changes are applied immediately to rule evaluation in the table below.</div>
     </div>
   );
 }
@@ -1218,7 +1218,7 @@ function CoachingDialog({ open, onClose }: { open: boolean; onClose: () => void 
       <div className="relative mt-10 w-full max-w-3xl mx-4 bg-white rounded-2xl shadow-2xl border border-gray-200">
         <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100">
           <div className="text-base font-semibold text-gray-900">Notes / Coaching self‑talk</div>
-          <Button className="bg-white" onClick={onClose}><X className="w-4 h-4"/>Đóng</Button>
+          <Button className="bg-white" onClick={onClose}><X className="w-4 h-4"/>Close</Button>
         </div>
         <div className="max-h-[70vh] overflow-y-auto p-4">
           <p className="text-sm text-gray-600 mb-3">🔹 Personal Day NLP Coaching Mantras</p>
