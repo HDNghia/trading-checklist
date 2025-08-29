@@ -143,7 +143,7 @@ function parseRulesToSettings(rules: APIRule[], base: RuleSettings): RuleSetting
   return out;
 }
 
-async function saveSettingsToBackend(accountNumber: number, settings: RuleSettings, existing: APIRule[] | null) {
+async function saveSettingsToBackend(settings: RuleSettings, existing: APIRule[] | null) {
   if (!existing) throw new Error("No server rules loaded yet");
   const upd = (name: string, conditionPatch: any) => {
     const r = existing.find(x => x.name.toLowerCase().includes(name.toLowerCase()));
@@ -452,7 +452,6 @@ export default function DailyChecklistHistory() {
   const [plans, setPlans] = useState<Record<string, PreTradePlan | undefined>>({});
   // NEW: per-entry trade journals by date
   const [journals, setJournals] = useState<Record<string, TradeJournalEntry[]>>({});
-  const [planHistory, setPlanHistory] = useState<Record<string, PlanHistoryEntry[]>>({});
   const [settingsHistory, setSettingsHistory] = useState<SettingsHistoryEntry[]>([]);
 
   // Coaching dialog
@@ -488,7 +487,7 @@ export default function DailyChecklistHistory() {
     } catch (e) { console.warn(e); }
   }
   async function handleSaveSettings() {
-    try { await saveSettingsToBackend(accountNumber, settings, serverRules); }
+    try { await saveSettingsToBackend(settings, serverRules); }
     catch (e) { console.warn(e); }
     // append settings history
     const entry: SettingsHistoryEntry = { id: `${Date.now()}`, savedAt: new Date().toISOString(), settings };
@@ -602,7 +601,6 @@ export default function DailyChecklistHistory() {
   function handlePlanSaved(p: PreTradePlan) {
     setPlans(prev => ({ ...prev, [focusDate]: p }));
     const entry: PlanHistoryEntry = { id: `${focusDate}-${Date.now()}`, savedAt: new Date().toISOString(), plan: p };
-    setPlanHistory(prev => ({ ...prev, [focusDate]: [entry, ...(prev[focusDate] || [])].slice(0, 20) }));
     savePlanToBackend(accountNumber, focusDate, p).catch(console.error);
   }
 
@@ -649,7 +647,6 @@ export default function DailyChecklistHistory() {
           <Button className="bg-indigo-50 border-indigo-200" onClick={() => setShowCoaching(true)} title="Open coaching self-talk"><BookOpen className="w-4 h-4"/>Mantras</Button>
         }>
           <PreTradePlanForm
-            dateISO={focusDate}
             settings={settings}
             value={planForFocus}
             onSave={handlePlanSaved}
@@ -977,7 +974,7 @@ function Sparkline({ data, width = 120, height = 40, strokeClass = "stroke-emera
 }
 
 // ---------------- Forms -----------------
-function PreTradePlanForm({ dateISO, settings, value, onSave }: { dateISO: string; settings: RuleSettings; value?: PreTradePlan; onSave: (p: PreTradePlan) => void }) {
+function PreTradePlanForm({ settings, value, onSave }: { settings: RuleSettings; value?: PreTradePlan; onSave: (p: PreTradePlan) => void }) {
   const [mood, setMood] = useState(value?.mood || "Calm");
   const [plannedTrades, setPlannedTrades] = useState<number>(value?.plannedTrades ?? 1);
   const [rrTarget, setRrTarget] = useState<number>(value?.rrTarget ?? settings.minRRAllowed);
