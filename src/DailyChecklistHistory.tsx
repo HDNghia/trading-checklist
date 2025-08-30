@@ -307,6 +307,60 @@ function exportCsv(rows: any[], filename = "checklists.csv") {
   setTimeout(() => URL.revokeObjectURL(url), 5000);
 }
 
+// ========================= Sample Data =========================
+// Sample Pre‑Trade Plan data with type "daily"
+const SAMPLE_PRETRADE_PLAN = {
+  "account_number": "123456789",
+  "condition": {
+    "mood": "Focused",
+    "plannedTrades": 3,
+    "plannedWindows": [
+      { "start": "08:00", "end": "10:00", "label": "London Open" },
+      { "start": "14:00", "end": "16:00", "label": "NY Session" }
+    ],
+    "expectedHighTime": "09:30",
+    "expectedLowTime": "15:45",
+    "rrTarget": 2.5,
+    "notes": "Focus on GBP/USD and EUR/USD. Wait for clear setups with proper risk management.",
+    "submittedAt": new Date().toISOString()
+  },
+  "type": "daily"
+};
+
+// Sample Pre‑Entry Journal data with type "pre_entry"
+const SAMPLE_PREENTRY_JOURNAL = {
+  "account_number": "123456789",
+  "condition": {
+    "id": "entry_001",
+    "createdAt": new Date().toISOString(),
+    "mood": "Calm",
+    "conditions": "H1 uptrend confirmed, pullback to H15 demand zone, London session confluence, strong support at 1.0850",
+    "entry": 1.0865,
+    "lots": 0.5,
+    "sl": 1.0840,
+    "rr": 2.5,
+    "valuePerPoint": 10,
+    "equityAtEntry": 10000,
+    "riskCash": 125,
+    "riskPct": 1.25,
+    "profitAtTP": 312.5,
+    "lossAtSL": 125
+  },
+  "type": "pre_entry"
+};
+
+// Helper function to load sample data
+function loadSampleData() {
+  console.log("Sample Pre‑Trade Plan:", SAMPLE_PRETRADE_PLAN);
+  console.log("Sample Pre‑Entry Journal:", SAMPLE_PREENTRY_JOURNAL);
+  
+  // You can use these samples to populate the forms or save to backend
+  return {
+    pretradePlan: SAMPLE_PRETRADE_PLAN,
+    preEntryJournal: SAMPLE_PREENTRY_JOURNAL
+  };
+}
+
 /**
  * LUMIR – Behavioral Performance Hub (Prototype with Pre‑trade Plan + Journal + Rule Settings + Coaching Dialog)
  * Self‑contained React + Tailwind component (no external libs)
@@ -618,6 +672,9 @@ export default function DailyChecklistHistory() {
             <Button className="bg-indigo-50 border-indigo-200" onClick={() => setShowCoaching(true)} title="Notes / Coaching self-talk">
               <BookOpen className="w-4 h-4"/> Coaching self‑talk
             </Button>
+            <Button className="bg-green-50 border-green-200" onClick={loadSampleData} title="Load sample data">
+              📊 Load Sample Data
+            </Button>
           </div>
         </div>
         <div className="mt-3 grid grid-cols-1 md:grid-cols-3 gap-3">
@@ -662,9 +719,9 @@ export default function DailyChecklistHistory() {
                           <div className="text-xs text-gray-500">Trades: {h.plan.plannedTrades} • Mood: {h.plan.mood}</div>
                           <div className="text-xs text-gray-500">Windows: {h.plan.plannedWindows.map(w => `${w.label || ''} ${w.start}-${w.end}`).join('; ')}</div>
                         </div>
-                      </div>
+            </div>
                     </CardContent>
-                  </Card>
+          </Card>
                 ))}
               </div>
             </div>
