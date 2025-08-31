@@ -111,9 +111,21 @@ export type APIRule = { id: number; account_number: number; name: string; descri
 const delay = (ms: number) => new Promise((res) => setTimeout(res, ms));
 
 async function fetchRulesFromBackend(accountNumber: number): Promise<APIRule[]> {
-  const res = await fetch(`/api/trade-rules?account_number=${accountNumber}`);
-  if (!res.ok) throw new Error(`Fetch rules failed ${res.status}`);
-  return await res.json();
+  try {
+    const res = await fetch(`https://ftmo-api-dev.buso.asia/api/v1/trade-rules?account_number=${accountNumber}&status=not_executed`);
+    if (!res.ok) throw new Error(`Fetch rules failed ${res.status}`);
+    const response = await res.json();
+    
+    // Extract data from the response structure: { status, data, msg }
+    if (response.status && response.data) {
+      return response.data;
+    }
+    throw new Error('Invalid response format');
+  } catch (e) {
+    console.warn('Failed to fetch rules from backend:', e);
+    // Return empty array instead of mock data to indicate real failure
+    return [];
+  }
 }
 
 function parseRulesToSettings(rules: APIRule[], base: RuleSettings): RuleSettings {
@@ -144,29 +156,223 @@ function parseRulesToSettings(rules: APIRule[], base: RuleSettings): RuleSetting
 }
 
 async function saveSettingsToBackend(settings: RuleSettings, existing: APIRule[] | null) {
-  if (!existing) throw new Error("No server rules loaded yet");
-  const upd = (name: string, conditionPatch: any) => {
-    const r = existing.find(x => x.name.toLowerCase().includes(name.toLowerCase()));
-    if (!r) return Promise.resolve(undefined);
-    return fetch(`/api/trade-rules/${r.id}`,{ method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ condition: { ...r.condition, ...conditionPatch } }) });
-  };
-  await Promise.all([
-    upd("Max Risk", { max_risk_percent: settings.maxRiskPercent, apply_to: "all_trades" }),
-    upd("No Overtrade", { max_positions: settings.maxPositions, max_lots_per_trade: settings.maxLotsPerTrade }),
-    upd("Max SL", { max_sl_percent: settings.maxSLPercent, apply_to: "all_positions", enforce_strict: true }),
-    upd("Max Daily DD", { max_dd_percent: settings.maxDailyDDPercent, window: "daily", apply_to: "account" }),
-    upd("RR Target Declared", { min_rr_allowed: settings.minRRAllowed, require_rr_declared: true, apply_to: "all_trades" }),
-    upd("Allowed Trading Sessions", { allowed_sessions: settings.allowedSessions, violate_outside_session: settings.violateOutsideSession, apply_to: "all_trades" }),
-    upd("First Trade Must Have Goal", { require_first_trade_goal: settings.requireFirstTradeGoal, window: "daily", apply_to: "first_trade_of_day" }),
-    upd("Max SL/TP Change", { max_sl_tp_change_percent: settings.maxSLTPChangePercent, apply_to: "all_positions" }),
-    upd("Journal", { require_journal_before_new_trade: settings.requireJournalBeforeNewTrade }),
-  ]);
+  if (!existing || !existing.length) throw new Error("No server rules loaded yet");
+  
+  try {
+    // Create a map to update existing rules based on current settings
+    const updatedRules = existing.map(rule => {
+      const updatedRule = { ...rule };
+      
+      // Update rule conditions based on settings
+      if (rule.name.toLowerCase().includes("max risk")) {
+        updatedRule.condition = {
+          ...rule.condition,
+          max_risk_percent: settings.maxRiskPercent
+        };
+        updatedRule.name = `Max Risk ${settings.maxRiskPercent}%`;
+        updatedRule.description = `Không được để rủi ro vượt quá ${settings.maxRiskPercent}% tổng tài khoản`;
+      } else if (rule.name.toLowerCase().includes("no overtrade")) {
+        updatedRule.condition = {
+          ...rule.condition,
+          max_positions: settings.maxPositions,
+          max_lots_per_trade: settings.maxLotsPerTrade
+        };
+      } else if (rule.name.toLowerCase().includes("max sl") && !rule.name.toLowerCase().includes("change")) {
+        updatedRule.condition = {
+          ...rule.condition,
+          max_sl_percent: settings.maxSLPercent
+        };
+        updatedRule.name = `Max SL ${settings.maxSLPercent}%`;
+        updatedRule.description = `Stop loss không được vượt quá ${settings.maxSLPercent}% tổng tài khoản`;
+      } else if (rule.name.toLowerCase().includes("max daily dd")) {
+        updatedRule.condition = {
+          ...rule.condition,
+          max_dd_percent: settings.maxDailyDDPercent
+        };
+        updatedRule.name = `Max Daily DD ${settings.maxDailyDDPercent}%`;
+        updatedRule.description = `Tổng sụt giảm vốn (drawdown) trong ngày không vượt quá ${settings.maxDailyDDPercent}% equity đầu ngày`;
+      } else if (rule.name.toLowerCase().includes("rr target declared")) {
+        updatedRule.condition = {
+          ...rule.condition,
+          min_rr_allowed: settings.minRRAllowed
+        };
+      } else if (rule.name.toLowerCase().includes("allowed trading sessions")) {
+        updatedRule.condition = {
+          ...rule.condition,
+          allowed_sessions: settings.allowedSessions,
+          violate_outside_session: settings.violateOutsideSession
+        };
+      } else if (rule.name.toLowerCase().includes("first trade must have goal")) {
+        updatedRule.condition = {
+          ...rule.condition,
+          require_first_trade_goal: settings.requireFirstTradeGoal
+        };
+      } else if (rule.name.toLowerCase().includes("max sl/tp change")) {
+        updatedRule.condition = {
+          ...rule.condition,
+          max_sl_tp_change_percent: settings.maxSLTPChangePercent
+        };
+        updatedRule.name = `Max SL/TP Change ${settings.maxSLTPChangePercent}%`;
+        updatedRule.description = `Không được thay đổi SL/TP quá ${settings.maxSLTPChangePercent}% so với khoảng cách ban đầu`;
+      }
+      
+      return updatedRule;
+    });
+
+    // Send bulk update to API
+    const response = await fetch(`https://ftmo-api-dev.buso.asia/api/v1/trade-rules/bulk-upsert`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ rules: updatedRules })
+    });
+
+    if (!response.ok) {
+      throw new Error(`Failed to save settings: ${response.status}`);
+    }
+
+    console.log('Settings saved to backend successfully');
+  } catch (e) {
+    console.error('Failed to save settings to backend:', e);
+    throw e;
+  }
 }
 
-async function savePlanToBackend(accountNumber: number, dateISO: string, plan: PreTradePlan) {
+async function savePlanToBackend(accountNumber: number, plan: PreTradePlan) {
   try {
-    await fetch(`/api/pretrade-plans`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ account_number: accountNumber, date: dateISO, plan }) });
-  } catch (e) { console.warn('Save plan failed', e); }
+    const payload = {
+      account_number: accountNumber.toString(),
+      condition: {
+        mood: plan.mood,
+        plannedTrades: plan.plannedTrades,
+        plannedWindows: plan.plannedWindows,
+        expectedHighTime: plan.expectedHighTime,
+        expectedLowTime: plan.expectedLowTime,
+        rrTarget: plan.rrTarget,
+        notes: plan.notes,
+        submittedAt: plan.submittedAt
+      },
+      type: "daily"
+    };
+
+    const response = await fetch(`https://ftmo-api-dev.buso.asia/api/v1/daily_behavioral_checklist`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+
+    if (!response.ok) {
+      throw new Error(`Failed to save plan: ${response.status}`);
+    }
+
+    console.log('Pre-trade plan saved successfully');
+  } catch (e) {
+    console.error('Save plan failed', e);
+    throw e;
+  }
+}
+
+async function saveJournalToBackend(accountNumber: number, journal: TradeJournalEntry) {
+  try {
+    const payload = {
+      account_number: accountNumber.toString(),
+      condition: {
+        mood: journal.mood,
+        conditions: journal.conditions,
+        entry: journal.entry,
+        lots: journal.lots,
+        sl: journal.sl,
+        rr: journal.rr,
+        valuePerPoint: journal.valuePerPoint,
+        equityAtEntry: journal.equityAtEntry,
+        riskCash: journal.riskCash,
+        riskPct: journal.riskPct,
+        profitAtTP: journal.profitAtTP,
+        lossAtSL: journal.lossAtSL
+      },
+      type: "pre_entry"
+    };
+
+    const response = await fetch(`https://ftmo-api-dev.buso.asia/api/v1/daily_behavioral_checklist`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+
+    if (!response.ok) {
+      throw new Error(`Failed to save journal: ${response.status}`);
+    }
+
+    console.log('Pre-entry journal saved successfully');
+  } catch (e) {
+    console.error('Save journal failed', e);
+    throw e;
+  }
+}
+
+async function loadPlansFromBackend(accountNumber: number): Promise<PreTradePlan[]> {
+  try {
+    const response = await fetch(`https://ftmo-api-dev.buso.asia/api/v1/daily_behavioral_checklist?account_number=${accountNumber}&type=daily`);
+    
+    if (!response.ok) {
+      throw new Error(`Failed to load plans: ${response.status}`);
+    }
+
+    const result = await response.json();
+    
+    if (result.status && result.data) {
+      return result.data.map((item: any) => ({
+        mood: item.condition.mood,
+        plannedTrades: item.condition.plannedTrades,
+        plannedWindows: item.condition.plannedWindows,
+        expectedHighTime: item.condition.expectedHighTime,
+        expectedLowTime: item.condition.expectedLowTime,
+        rrTarget: item.condition.rrTarget,
+        notes: item.condition.notes,
+        submittedAt: item.condition.submittedAt
+      }));
+    }
+    
+    return [];
+  } catch (e) {
+    console.error('Failed to load plans from backend:', e);
+    return [];
+  }
+}
+
+async function loadJournalsFromBackend(accountNumber: number): Promise<TradeJournalEntry[]> {
+  try {
+    const response = await fetch(`https://ftmo-api-dev.buso.asia/api/v1/daily_behavioral_checklist?account_number=${accountNumber}&type=pre_entry`);
+    
+    if (!response.ok) {
+      throw new Error(`Failed to load journals: ${response.status}`);
+    }
+
+    const result = await response.json();
+    
+    if (result.status && result.data) {
+      return result.data.map((item: any, index: number) => ({
+        id: item.id?.toString() || `journal_${index}`,
+        createdAt: item.created_at,
+        mood: item.condition.mood,
+        conditions: item.condition.conditions,
+        entry: item.condition.entry,
+        lots: item.condition.lots,
+        sl: item.condition.sl,
+        rr: item.condition.rr,
+        valuePerPoint: item.condition.valuePerPoint,
+        equityAtEntry: item.condition.equityAtEntry,
+        riskCash: item.condition.riskCash,
+        riskPct: item.condition.riskPct,
+        profitAtTP: item.condition.profitAtTP,
+        lossAtSL: item.condition.lossAtSL
+      }));
+    }
+    
+    return [];
+  } catch (e) {
+    console.error('Failed to load journals from backend:', e);
+    return [];
+  }
 }
 
 function rng(seed: number) {
@@ -305,60 +511,6 @@ function exportCsv(rows: any[], filename = "checklists.csv") {
   const a = document.createElement("a");
   a.href = url; a.download = filename; a.click();
   setTimeout(() => URL.revokeObjectURL(url), 5000);
-}
-
-// ========================= Sample Data =========================
-// Sample Pre‑Trade Plan data with type "daily"
-const SAMPLE_PRETRADE_PLAN = {
-  "account_number": "123456789",
-  "condition": {
-    "mood": "Focused",
-    "plannedTrades": 3,
-    "plannedWindows": [
-      { "start": "08:00", "end": "10:00", "label": "London Open" },
-      { "start": "14:00", "end": "16:00", "label": "NY Session" }
-    ],
-    "expectedHighTime": "09:30",
-    "expectedLowTime": "15:45",
-    "rrTarget": 2.5,
-    "notes": "Focus on GBP/USD and EUR/USD. Wait for clear setups with proper risk management.",
-    "submittedAt": new Date().toISOString()
-  },
-  "type": "daily"
-};
-
-// Sample Pre‑Entry Journal data with type "pre_entry"
-const SAMPLE_PREENTRY_JOURNAL = {
-  "account_number": "123456789",
-  "condition": {
-    "id": "entry_001",
-    "createdAt": new Date().toISOString(),
-    "mood": "Calm",
-    "conditions": "H1 uptrend confirmed, pullback to H15 demand zone, London session confluence, strong support at 1.0850",
-    "entry": 1.0865,
-    "lots": 0.5,
-    "sl": 1.0840,
-    "rr": 2.5,
-    "valuePerPoint": 10,
-    "equityAtEntry": 10000,
-    "riskCash": 125,
-    "riskPct": 1.25,
-    "profitAtTP": 312.5,
-    "lossAtSL": 125
-  },
-  "type": "pre_entry"
-};
-
-// Helper function to load sample data
-function loadSampleData() {
-  console.log("Sample Pre‑Trade Plan:", SAMPLE_PRETRADE_PLAN);
-  console.log("Sample Pre‑Entry Journal:", SAMPLE_PREENTRY_JOURNAL);
-  
-  // You can use these samples to populate the forms or save to backend
-  return {
-    pretradePlan: SAMPLE_PRETRADE_PLAN,
-    preEntryJournal: SAMPLE_PREENTRY_JOURNAL
-  };
 }
 
 /**
@@ -555,6 +707,32 @@ export default function DailyChecklistHistory() {
   const dd7: number[] = [2.1, 1.3, 3.2, 2.6, 1.9, 2.4, 1.6];
   const daily = { compliance: 0.72, trades: 8, maxDD: 0.025 };
 
+  // ---- Load initial data from backend ----
+  useEffect(() => {
+    // Load plans and journals from backend on component mount
+    Promise.all([
+      loadPlansFromBackend(accountNumber),
+      loadJournalsFromBackend(accountNumber)
+    ]).then(([planData, journalData]) => {
+      // Convert plans array to record by date (taking the latest plan)
+      const plansRecord: Record<string, PreTradePlan | undefined> = {};
+      planData.forEach(plan => {
+        const date = plan.submittedAt ? plan.submittedAt.split('T')[0] : focusDate;
+        plansRecord[date] = plan;
+      });
+      setPlans(plansRecord);
+
+      // Convert journals array to record by date
+      const journalsRecord: Record<string, TradeJournalEntry[]> = {};
+      journalData.forEach(journal => {
+        const date = journal.createdAt ? journal.createdAt.split('T')[0] : focusDate;
+        if (!journalsRecord[date]) journalsRecord[date] = [];
+        journalsRecord[date].push(journal);
+      });
+      setJournals(journalsRecord);
+    }).catch(console.error);
+  }, [accountNumber, focusDate]);
+
   // ---- Load data whenever period/settings changes ----
   useEffect(() => {
     setLoading(true);
@@ -644,16 +822,43 @@ export default function DailyChecklistHistory() {
   const equityForFocus = currentDay?.equityOpen ?? 10000; // default if unknown
 
   function saveJournalEntry(e: TradeJournalEntry) {
+    // Update local state immediately
     setJournals(prev => ({ ...prev, [focusDate]: [...(prev[focusDate] || []), e] }));
+    // Also save to backend
+    saveJournalToBackend(accountNumber, e).then(() => {
+      // Reload journals from backend to get the latest data with IDs
+      loadJournalsFromBackend(accountNumber).then(journalData => {
+        const journalsRecord: Record<string, TradeJournalEntry[]> = {};
+        journalData.forEach(journal => {
+          const date = journal.createdAt ? journal.createdAt.split('T')[0] : focusDate;
+          if (!journalsRecord[date]) journalsRecord[date] = [];
+          journalsRecord[date].push(journal);
+        });
+        setJournals(journalsRecord);
+      });
+    }).catch(console.error);
   }
   function removeJournalEntry(id: string) {
     setJournals(prev => ({ ...prev, [focusDate]: (prev[focusDate] || []).filter(x => x.id !== id) }));
   }
   function handlePlanSaved(p: PreTradePlan) {
+    // Update local state immediately
     setPlans(prev => ({ ...prev, [focusDate]: p }));
     const entry: PlanHistoryEntry = { id: `${focusDate}-${Date.now()}`, savedAt: new Date().toISOString(), plan: p };
     setPlanHistory(prev => ({ ...prev, [focusDate]: [entry, ...(prev[focusDate] || [])].slice(0, 20) }));
-    savePlanToBackend(accountNumber, focusDate, p).catch(console.error);
+    
+    // Save to backend and reload data
+    savePlanToBackend(accountNumber, p).then(() => {
+      // Reload plans from backend to get the latest data
+      loadPlansFromBackend(accountNumber).then(planData => {
+        const plansRecord: Record<string, PreTradePlan | undefined> = {};
+        planData.forEach(plan => {
+          const date = plan.submittedAt ? plan.submittedAt.split('T')[0] : focusDate;
+          plansRecord[date] = plan;
+        });
+        setPlans(plansRecord);
+      });
+    }).catch(console.error);
   }
 
   return (
@@ -671,9 +876,6 @@ export default function DailyChecklistHistory() {
             <Button onClick={() => exportCsv(exportRows)}><Download className="w-4 h-4" />Export CSV</Button>
             <Button className="bg-indigo-50 border-indigo-200" onClick={() => setShowCoaching(true)} title="Notes / Coaching self-talk">
               <BookOpen className="w-4 h-4"/> Coaching self‑talk
-            </Button>
-            <Button className="bg-green-50 border-green-200" onClick={loadSampleData} title="Load sample data">
-              📊 Load Sample Data
             </Button>
           </div>
         </div>
@@ -718,13 +920,13 @@ export default function DailyChecklistHistory() {
                           <div className="text-sm text-gray-700"><span className="font-medium">{new Date(h.savedAt).toLocaleTimeString()}</span> • RR ≥ {h.plan.rrTarget}</div>
                           <div className="text-xs text-gray-500">Trades: {h.plan.plannedTrades} • Mood: {h.plan.mood}</div>
                           <div className="text-xs text-gray-500">Windows: {h.plan.plannedWindows.map(w => `${w.label || ''} ${w.start}-${w.end}`).join('; ')}</div>
-                        </div>
+            </div>
             </div>
                     </CardContent>
           </Card>
                 ))}
               </div>
-            </div>
+              </div>
           )}
         </LegacyCard>
 
@@ -736,7 +938,7 @@ export default function DailyChecklistHistory() {
           <div className="mt-3 flex gap-2">
             <Button onClick={handleLoadRules}>Load data</Button>
             <Button className="bg-indigo-600 text-white border-indigo-600 hover:bg-indigo-700" onClick={handleSaveSettings}>Save to backend</Button>
-          </div>
+            </div>
         </LegacyCard>
       </section>
 
@@ -779,11 +981,11 @@ export default function DailyChecklistHistory() {
                         <div className="text-xs text-gray-500 mt-1">{j.conditions}</div>
                         <div className="text-xs text-gray-700 mt-2">Entry <span className="font-mono">{j.entry}</span> • SL <span className="font-mono">{j.sl}</span> • Lots <span className="font-mono">{j.lots}</span> • RR <span className="font-mono">{j.rr}</span></div>
                         <div className="text-xs text-gray-700">Risk≈ <span className="font-mono">{(j.riskCash ?? 0).toFixed(2)}</span> ({(j.riskPct ?? 0).toFixed(2)}%) • TP P/L≈ <span className="font-mono">{(j.profitAtTP ?? 0).toFixed(2)}</span> • SL P/L≈ <span className="font-mono">{(j.lossAtSL ?? 0).toFixed(2)}</span></div>
-                      </div>
-                      <Button onClick={() => removeJournalEntry(j.id)} className="text-rose-600 hover:text-rose-700"><Trash2 className="w-4 h-4"/>Delete</Button>
                 </div>
+                      <Button onClick={() => removeJournalEntry(j.id)} className="text-rose-600 hover:text-rose-700"><Trash2 className="w-4 h-4"/>Delete</Button>
+            </div>
                   </CardContent>
-                </Card>
+          </Card>
               ))}
             </div>
           </div>
@@ -799,8 +1001,8 @@ export default function DailyChecklistHistory() {
                 <label className="text-xs text-gray-500">Trader</label>
                 <div className="mt-1 flex gap-2">
                   <input value={trader} onChange={e => setTrader((e.target as HTMLInputElement).value)} placeholder="trader id" className="w-full px-3 py-2 rounded-xl border border-gray-200" />
-                </div>
               </div>
+            </div>
               <div className="col-span-1">
                 <label className="text-xs text-gray-500">Focus date</label>
                 <div className="mt-1 flex items-center gap-2">
@@ -830,13 +1032,13 @@ export default function DailyChecklistHistory() {
         </div>
       </div>
           </CardContent>
-        </Card>
+          </Card>
         <Card>
           <CardHeader>
             <div className="flex items-center justify-between">
               <div className="font-medium">{fmt(new Date(startISO + "T00:00:00Z"))} → {fmt(new Date(endISO + "T00:00:00Z"))}</div>
               <div className="text-sm text-gray-500">Pick a day to inspect</div>
-            </div>
+        </div>
           </CardHeader>
           <CardContent>
             <CalendarStrip startISO={startISO} endISO={endISO} selectedISO={focusDate} onPick={iso => setFocusDate(iso)} />
@@ -907,7 +1109,7 @@ export default function DailyChecklistHistory() {
 
       {/* Coaching Dialog */}
       <CoachingDialog open={showCoaching} onClose={() => setShowCoaching(false)} />
-    </div>
+              </div>
   );
 }
 
@@ -917,7 +1119,7 @@ const DayRuleRow: React.FC<{ rc: RuleCheck }> = ({ rc }) => (
     <div className="min-w-0">
       <div className="font-medium text-gray-900 truncate">{rc.title}</div>
       {rc.notes && <div className="text-xs text-gray-500 mt-0.5">{rc.notes}</div>}
-    </div>
+          </div>
     <div className={`text-xs px-2.5 py-1 rounded-full border whitespace-nowrap ${badgeColor(rc.pass, rc.level)}`}>
       {rc.pass ? "PASS" : (rc.level === "error" ? "ERROR" : "WARN")}
       {rc.value != null && <span className="ml-2 text-gray-700">{String(rc.value)}{rc.limit ? ` / ${rc.limit}` : ``}</span>}
@@ -936,18 +1138,18 @@ const DayChecklistCard: React.FC<{ day: ChecklistDay }> = ({ day }) => {
             <div className="text-xs text-gray-500">Compliance</div>
             <div className="text-xl font-semibold">{pct(rate)}</div>
             <div className="text-xs text-gray-500 mt-1">{passed}/{day.rules.length} rules passed</div>
-          </Card>
+        </Card>
           <Card className="p-3">
             <div className="text-xs text-gray-500">Trades</div>
             <div className="text-xl font-semibold">{day.tradesCount}</div>
             <div className="text-xs text-gray-500 mt-1">Today</div>
-          </Card>
+        </Card>
           <Card className="p-3">
             <div className="text-xs text-gray-500">Max Drawdown (day)</div>
             <div className={`text-xl font-semibold ${day.ddPercent && day.ddPercent >= 3 ? 'text-rose-600' : 'text-gray-900'}`}>{day.ddPercent?.toFixed(1)}%</div>
             <div className="text-xs text-gray-500 mt-1">Reset threshold 3%</div>
           </Card>
-        </div>
+    </div>
         <div className="divide-y">
           {day.rules.map(r => <DayRuleRow key={r.key} rc={r} />)}
         </div>
@@ -1156,12 +1358,12 @@ function PreEntryJournalForm({ dateISO, equity, settings, onSave }: { dateISO: s
   return (
     <div className="grid grid-cols-1 gap-3 text-sm">
       <div className="grid md:grid-cols-5 gap-3">
-        <label className="flex flex-col gap-1">
+      <label className="flex flex-col gap-1">
           <span className="text-gray-700">Mood</span>
           <select className="rounded-md border border-gray-300 px-3 py-2" value={mood} onChange={e => setMood(e.target.value as any)}>
             {['Calm','Focused','Anxious','Euphoric','Stressed'].map(m => <option key={m}>{m}</option>)}
-          </select>
-        </label>
+        </select>
+      </label>
         <NumberField label="Entry price" value={entry} onChange={setEntry} step={0.01} />
         <NumberField label="Lots" value={lots} onChange={setLots} step={0.01} />
         <NumberField label="Stop Loss price" value={sl} onChange={setSL} step={0.01} />
