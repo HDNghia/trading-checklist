@@ -893,7 +893,7 @@ export default function DailyChecklistHistory() {
             </div>
           </HeaderStat>
           <HeaderStat label="Suggested mantra">
-            <div className="text-sm text-gray-800">Day {suggested.day}: <span className="font-medium">{suggested.theme}</span></div>
+            <div className="text-sm text-gray-800">DAI_{suggested.day}: <span className="font-medium">{suggested.theme}</span></div>
           </HeaderStat>
         </div>
       </header>
